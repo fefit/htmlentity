@@ -1,0 +1,8 @@
+[package]
+name = "htmlentity"
+version = "0.1.0"
+authors = ["ganmin <jxz_211@163.com>"]
+edition = "2018"
+
+[dependencies]
+lazy_static = "1.4.0"
