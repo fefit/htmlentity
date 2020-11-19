@@ -1,2 +1,2 @@
-pub mod entities;
-pub(crate) mod search;
+pub mod data;
+pub mod entity;

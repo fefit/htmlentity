@@ -1,4 +1,4 @@
-pub const ENTITIES:[(&str, i32); 2031 ] = [
+pub const ENTITIES: [(&str, u32); 2031] = [
   ("&Tab;", 0x9),
   ("&NewLine;", 0xA),
   ("&excl;", 0x21),
@@ -2029,5 +2029,5 @@ pub const ENTITIES:[(&str, i32); 2031 ] = [
   ("&wopf;", 0x1D568),
   ("&xopf;", 0x1D569),
   ("&yopf;", 0x1D56A),
-  ("&zopf;", 0x1D56B)
+  ("&zopf;", 0x1D56B),
 ];
