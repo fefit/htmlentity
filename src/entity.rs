@@ -11,7 +11,7 @@ use std::sync::Mutex;
 use std::cmp::{ Ord, Ordering};
 use std::fmt::{Debug};
 type SortedEntity = Vec<DecodeEntityItem>;
-
+type Positions = HashMap<u8,(usize, usize)>;
 #[derive(Debug, Eq)]
 struct DecodeEntityItem{
   chars: Vec<u8>,
@@ -67,7 +67,7 @@ impl PartialEq for DecodeEntityItem{
 lazy_static! {
   static ref IS_SORTED: Mutex<bool> = Mutex::new(false);
   static ref DECODE_ENTITIES: Mutex<SortedEntity> = Mutex::new(vec![]);
-  static ref FIRST_POSITION: Mutex<HashMap<u8,(u32, u32)>> = Mutex::new(HashMap::new());
+  static ref FIRST_POSITION: Mutex<Positions> = Mutex::new(HashMap::new());
 }
 /**
  * Find the charCode index
@@ -164,7 +164,7 @@ pub fn encode(content: &str) -> (String, u32) {
  */
 fn sort_entities() {
   let mut sorted: SortedEntity = Vec::with_capacity(ENTITIES.len());
-  let mut counts: HashMap<u8, (usize, usize)> = HashMap::new();
+  let mut counts: Positions = HashMap::new();
   let mut firsts: Vec<u8> = Vec::with_capacity(52);
   // 二分查找插入
   for pair in &ENTITIES[..] {
@@ -201,8 +201,10 @@ fn sort_entities() {
     *position = (cur_index, next_index);
     cur_index = next_index;
   }
-
-  println!("counts:{:?}", counts);
+  let mut positions = FIRST_POSITION.lock().unwrap();
+  *positions = counts;
+  let mut entities = DECODE_ENTITIES.lock().unwrap();
+  *entities = sorted;
 }
 /**
  * 二分查找插入
@@ -222,10 +224,45 @@ fn binary_insert(sorted: &mut SortedEntity, cur: DecodeEntityItem) {
  * Decode
  * 将html实体转化为具体字符
  */
-pub fn decode(_content: &str) {
+pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
   let mut is_sorted = IS_SORTED.lock().unwrap();
   if !*is_sorted {
     sort_entities();
     *is_sorted = true;
   }
+  let sorted = DECODE_ENTITIES.lock().unwrap();
+  let firsts = FIRST_POSITION.lock().unwrap();
+  let mut result: Vec<char> = Vec::with_capacity(chars.len());
+  let mut entity: Vec<char> = Vec::with_capacity(5);
+  let mut is_in_entity: bool = false;
+  for ch in chars{
+    if !is_in_entity{
+      if ch == '&'{
+        is_in_entity = true;
+        entity.push(ch);
+      }else{
+        result.push(ch);
+      }
+    } else {
+      if ch.is_ascii_alphabetic(){
+        entity.push(ch);
+      }else {
+        if ch == ';'{
+          entity.push(ch);
+
+        }else{
+          result.extend(entity);
+          result.push(ch);
+          entity = Vec::with_capacity(5);
+        }
+        is_in_entity = false;
+      }
+    }
+  }
+  result
+}
+
+pub fn decode(content: &str) -> Vec<char>{
+  let chars: Vec<char> = content.chars().collect();
+  decode_chars(chars)
 }
