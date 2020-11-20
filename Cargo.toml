@@ -1,8 +1,25 @@
 [package]
+edition = "2018"
 name = "htmlentity"
 version = "0.1.0"
 authors = ["ganmin <jxz_211@163.com>"]
-edition = "2018"
+keywords = ["entity", "html-entity", "html-escape", "html-encode", "html-decode"]
+description = "A html encode and decode library written in rust."
+repository = "https://github.com/fefit/htmlentity"
+license = "MIT"
+
 
 [dependencies]
 lazy_static = "1.4.0"
+wasm-bindgen = { version = "0.2.68", features = ["serde-serialize"] }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "benchmark"
+harness = false
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
