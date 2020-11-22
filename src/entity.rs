@@ -1,188 +1,176 @@
-/**
-encode时：按照二分算法查找根据字符的code值判断是否需要encode，然后挑选最靠前的一个
-decode时：复制一份的数据，按照归并排序将数据排序为("&xxx", 0xxx, 'x', len)的元组数组
-用HashMap<(char, bool), usize>：存取找到的首字母开始和结束索引，缩小查找范围
-查找的时候，先找到首字母的首位端，再二分查找，根据len，第二个字母的charCode
-*/
-use crate::data::{EntityItem, ENTITIES};
+use crate::data::{ EntityItem, ENTITIES };
 use lazy_static::lazy_static;
+use std::{sync::atomic::{ AtomicBool, Ordering}};
 use std::collections::HashMap;
 use std::sync::Mutex;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
 type SortedEntity = Vec<EntityItem>;
 type Positions = HashMap<u8, (usize, usize)>;
 
+pub const NOOP:Option<&dyn Fn(char) -> bool> = None::<&dyn Fn(char)->bool>;
+
 lazy_static! {
-  static ref IS_SORTED: Mutex<bool> = Mutex::new(false);
+  static ref IS_SORTED: AtomicBool = AtomicBool::new(false);
   static ref DECODE_ENTITIES: Mutex<SortedEntity> = Mutex::new(vec![]);
   static ref FIRST_POSITION: Mutex<Positions> = Mutex::new(HashMap::new());
+  // special chars
+  static ref SPECIAL_CHARS: HashMap<char, &'static str> = {
+    let mut map = HashMap::new();
+    map.insert('>', "&gt;");
+    map.insert('<', "&lt;");
+    map.insert('"', "&quot;");
+    map.insert('\'', "&apos;");
+    map.insert('&', "&amp;");
+    map
+  };
 }
-
-/*
-#[derive(Debug, Eq)]
-struct DecodeEntityItem {
-  chars: Vec<u8>,
-  code: u32,
-}
-impl Ord for DecodeEntityItem {
-  fn cmp(&self, other: &Self) -> Ordering {
-    let Self { chars, .. } = self;
-    let Self {
-      chars: other_chars, ..
-    } = other;
-    let cur_len = chars.len();
-    let other_len = other_chars.len();
-    let max_len = if cur_len > other_len {
-      cur_len
-    } else {
-      other_len
-    };
-    for index in 0..max_len {
-      let cur_char = chars.get(index).unwrap_or(&0);
-      let other_char = other_chars.get(index).unwrap_or(&0);
-      if cur_char != other_char {
-        return cur_char.cmp(other_char);
-      }
-    }
-    Ordering::Equal
-  }
-}
-impl PartialOrd for DecodeEntityItem {
-  fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-    Some(self.cmp(other))
-  }
-}
-
-impl PartialEq for DecodeEntityItem {
-  fn eq(&self, other: &Self) -> bool {
-    let Self { chars, .. } = self;
-    let Self {
-      chars: other_chars, ..
-    } = other;
-    let len = chars.len();
-    if len == other_chars.len() {
-      for index in 0..len {
-        if chars[index] != other_chars[index] {
-          return false;
-        }
-      }
-      return true;
-    }
-    false
-  }
-}
-*/
-
-/**
- * Find the charCode index
- * 二分查找法查找当前code
-*/
-/*
-fn search_char_code_pos(char_code: u32, start_index: usize, end_index: usize) -> Option<usize> {
-  let (index, finded) = binary_search_index(char_code, start_index, end_index, |i| {
-    let (_, code) = &ENTITIES[i];
-    *code
-  });
-  if finded {
-    Some(index)
-  } else {
-    None
-  }
-}
-
-fn binary_search_index<T: Ord + Debug, F>(
-  compared: T,
-  start_index: usize,
-  end_index: usize,
-  cb: F,
-) -> (usize, bool)
-where
-  F: Fn(usize) -> T,
-{
-  let start_value = cb(start_index);
-  let end_value = cb(end_index);
-  let more_than_start = compared > start_value;
-  if more_than_start && compared < end_value {
-    let middle_index = (start_index + end_index) / 2;
-    let middle_value = cb(middle_index);
-    if compared == middle_value {
-      return (middle_index, true);
-    }
-    if compared > middle_value {
-      if end_index - middle_index > 1 {
-        return binary_search_index(compared, middle_index, end_index, cb);
-      }
-      return (end_index, false);
-    } else {
-      if middle_index - start_index > 1 {
-        return binary_search_index(compared, start_index, middle_index, cb);
-      }
-      return (start_index + 1, false);
-    }
-  }
-  if compared == start_value {
-    return (start_index, true);
-  }
-  if compared == end_value {
-    return (end_index, true);
-  }
-  if !more_than_start {
-    // less than start
-    (start_index, false)
-  } else {
-    // more than start, but also more than end
-    (end_index + 1, false)
-  }
-}
-*/
 
 /**
  * Encode,With replaced count
  * 将字符转化为html entity实体
  */
-pub fn encode_with_count(content: &str) -> (String, u32) {
-  let mut result = String::with_capacity(content.len() + 5);
-  let mut replaced_count: u32 = 0;
-  // let last_index = ENTITIES.len() - 1;
-  for ch in content.chars() {
-    let char_code = ch as u32;
-    /*
-    if let Some(index) = search_char_code_pos(char_code, 0, last_index)
-    */
-    let finded = (&ENTITIES[..]).binary_search_by_key(&char_code, |&(_, code)| code);
-    if let Ok(index) = finded {
-      let mut first_index = index;
-      // find the first, short and lowercase
-      loop {
-        if first_index > 0 {
-          let next_index = first_index - 1;
-          let (_, cur_char_code) = ENTITIES[next_index];
-          if cur_char_code != char_code {
+pub fn encode_char<F>(ch: char, encode_type: EncodeType, filter_fn: Option<F>) -> String 
+where F: Fn(char) -> bool {
+  use EncodeType::*;
+  let encode_type = encode_type as u8;
+  let char_code = ch as u32;
+  let mut result = String::with_capacity(5);
+  if encode_type & (Named as u8) > 0{
+    let mut should_find_name = true;
+    if let Some(filter_fn) = filter_fn{
+      if filter_fn(ch){
+        should_find_name = false;
+      }
+    }
+    if should_find_name{
+      let finded = (&ENTITIES[..]).binary_search_by_key(&char_code, |&(_, code)| code);
+      if let Ok(index) = finded {
+        let mut first_index = index;
+        // find the first, short and lowercase
+        loop {
+          if first_index > 0 {
+            let next_index = first_index - 1;
+            let (_, cur_char_code) = ENTITIES[next_index];
+            if cur_char_code != char_code {
+              break;
+            }
+            first_index -= 1;
+          } else {
             break;
           }
-          first_index -= 1;
-        } else {
-          break;
         }
+        let (entity, _) = ENTITIES[first_index];
+        result.push('&');
+        result.push_str(entity);
+        result.push(';');
+        return result;
       }
-      let (entity, _) = ENTITIES[first_index];
-      result.push('&');
-      result.push_str(entity);
-      result.push(';');
-      replaced_count += 1;
+    }
+  } 
+  if encode_type & (Hex as u8) > 0 {
+      let hex = format!("&#x{:x};", char_code);
+      result.push_str(&hex);
+      return result;
+  }
+  if encode_type & (Decimal as u8) > 0{
+      let dec = format!("&#{};", char_code);
+      result.push_str(&dec);
+      return result;
+  }
+  result.push(ch);
+  result
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+pub enum Entities{
+  SpecialCharsAndNoASCII = 6,
+  All = 1, // encode all
+  NoASCII = 2,  // encode character not ascii
+  SpecialChars = 4, // encode '<>&''
+}
+
+impl Default for Entities {
+  fn default() -> Self {
+      Entities::SpecialCharsAndNoASCII
+  }
+}
+
+impl Entities{
+  pub fn filter(&self, ch: &char, encode_type: EncodeType) -> (bool, Option<String>){
+    use Entities::*;
+    match self {
+      SpecialChars => {
+        let encode_type = encode_type as u8;
+        if let Some(&v) = SPECIAL_CHARS.get(ch){
+          if (encode_type & EncodeType::Named as u8) > 0{
+            return (true, Some(v.into()));
+          }
+          return (true, None);
+        }
+        (false, None)
+      }
+      NoASCII => {
+        (*ch as u32 > 0x80, None)
+      }
+      SpecialCharsAndNoASCII => {
+        let (need_encode, result) = Entities::NoASCII.filter(ch, encode_type);
+        if need_encode{
+          return (need_encode, result);
+        }
+        Entities::SpecialChars.filter(ch, encode_type)
+      }
+      All => (true, None)
+    }
+  }
+}
+
+/**
+ * Encode
+*/
+pub fn encode(content: &str, entities: Entities, encode_type: EncodeType) -> String{
+  let mut result = String::with_capacity(content.len() + 5);
+  for ch in content.chars() {
+    let (need_encode, encoded) = entities.filter(&ch, encode_type);
+    if need_encode {
+      if let Some(encoded) = encoded{
+        result.push_str(&encoded);
+      }else{
+        let encoded = encode_char(ch, encode_type, NOOP);
+        result.push_str(&encoded);
+      }
     } else {
       result.push(ch);
     }
   }
-  (result, replaced_count)
-}
-/**
- * Encode
-*/
-pub fn encode(content: &str) -> String {
-  let (result, _) = encode_with_count(content);
   result
 }
+
+/*
+* Alias for default
+*/
+pub fn encode_default(content: &str) -> String {
+  encode(content, Default::default(), Default::default())
+}
+
+/*
+* Encode with filter functions
+*/
+
+pub fn encode_filter<F>(content: &str, filter_char: F, encode_type: EncodeType, filter_name: Option<F>) -> String where F: Fn(char) -> bool{
+  let mut result = String::with_capacity(content.len() + 5);
+  for ch in content.chars() {
+    if filter_char(ch){
+      result.push_str(&encode_char(ch, encode_type, filter_name.as_ref()));
+    }else{
+      result.push(ch);
+    }
+  }
+  result
+}
+
+
 /**
  * Sort
  * 将entities排序成所需格式
@@ -234,10 +222,6 @@ fn binary_insert(sorted: &mut SortedEntity, cur: EntityItem) {
   let mut prev_index = 0;
   let len = sorted.len();
   if len > 0 {
-    /*
-      let (index, _) = binary_search_index(&cur, 0, len - 1, |i| &sorted[i]);
-      prev_index = index;
-    */
     let search = cur.0;
     prev_index = match sorted[..].binary_search_by(|&(name, _)| name.cmp(search)) {
       Ok(index) => index,
@@ -247,31 +231,48 @@ fn binary_insert(sorted: &mut SortedEntity, cur: EntityItem) {
   (*sorted).insert(prev_index, cur);
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum EntityType {
+#[derive(PartialEq, Eq)]
+enum EntityIn {
   Unkown,
   Named,
   Hex,
-  Number,
-  HexOrNumber,
+  Decimal,
+  HexOrDecimal,
 }
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[derive(Copy, Clone)]
+pub enum EncodeType{
+  Named = 0b00001,
+  Hex = 0b00010,
+  Decimal = 0b00100,
+  NamedOrHex = 0b00011,
+  NamedOrDecimal = 0b00101
+}
+
+impl Default for EncodeType {
+  fn default() -> Self {
+      EncodeType::NamedOrDecimal
+  }
+}
+
+
 /**
  * Decode Chars
  * 将html实体转化为具体字符
  */
 pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
-  use EntityType::*;
-  let mut is_sorted = IS_SORTED.lock().unwrap();
-  if !*is_sorted {
+  use EntityIn::*;
+  let is_sorted = IS_SORTED.load(Ordering::SeqCst);
+  if !is_sorted {
     sort_entities();
-    *is_sorted = true;
+    IS_SORTED.store(true, Ordering::SeqCst);
   }
   let sorted = DECODE_ENTITIES.lock().unwrap();
   let firsts = FIRST_POSITION.lock().unwrap();
   let mut result: Vec<char> = Vec::with_capacity(chars.len());
   let mut entity: Vec<char> = Vec::with_capacity(5);
   let mut is_in_entity: bool = false;
-  let mut entity_type: EntityType = Unkown;
+  let mut entity_in: EntityIn = Unkown;
   for ch in chars {
     if !is_in_entity {
       if ch == '&' {
@@ -282,34 +283,34 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
     } else {
       let mut is_entity_complete = false;
       if ch != ';' {
-        match entity_type {
+        match entity_in {
           Named => {
             if !ch.is_ascii_alphabetic() {
               is_in_entity = false;
             }
           }
-          Hex | Number => match ch {
+          Hex | Decimal => match ch {
             '0'..='9' => {}
-            'a'..='f' | 'A'..='F' if entity_type == Hex => {}
+            'a'..='f' | 'A'..='F' if entity_in == Hex => {}
             _ => {
               is_in_entity = false;
             }
           },
           Unkown => {
             if ch.is_ascii_alphabetic() {
-              entity_type = Named;
+              entity_in = Named;
             } else if ch == '#' {
-              entity_type = HexOrNumber;
+              entity_in = HexOrDecimal;
             } else {
               is_in_entity = false;
             }
           }
-          HexOrNumber => match ch {
+          HexOrDecimal => match ch {
             '0'..='9' => {
-              entity_type = Number;
+              entity_in = Decimal;
             }
             'x' | 'X' => {
-              entity_type = Hex;
+              entity_in = Hex;
             }
             _ => {
               is_in_entity = false;
@@ -322,7 +323,7 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
         }
       } else {
         // end of the entity
-        match entity_type {
+        match entity_in {
           Named => {
             // try to find the entity
             let first = entity[0] as u32 as u8;
@@ -338,10 +339,10 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
               }
             }
           }
-          Hex | Number => {
+          Hex | Decimal => {
             let base_type: u32;
             let numbers: &[char];
-            if entity_type == Hex {
+            if entity_in == Hex {
               base_type = 16;
               // remove the suffix '#x'
               numbers = &entity[2..];
@@ -352,7 +353,7 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
             }
             let numbers = numbers.iter().collect::<String>();
             if let Ok(char_code) = i64::from_str_radix(&numbers, base_type) {
-              if char_code >= 0 && char_code <= 0x10ffff {
+              if (0..=0x10ffff).contains(&char_code) {
                 if let Some(last_ch) = std::char::from_u32(char_code as u32) {
                   result.push(last_ch);
                   is_entity_complete = true;
@@ -365,7 +366,7 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
           }
         }
       }
-      entity_type = Unkown;
+      entity_in = Unkown;
       // wrong entity
       if !is_entity_complete {
         result.push('&');
@@ -380,6 +381,7 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
   }
   result
 }
+
 /**
  * Decode
  */

@@ -1,21 +1,23 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{ criterion_group, criterion_main, Criterion};
 use htmlentity::entity::{decode, encode};
 fn criterion_benchmark(c: &mut Criterion) {
   c.bench_function("encode", |b| {
     b.iter(|| {
       encode(
-        r##"
-      <div class="s-rank-title">
-        <a href="http://top.baidu.com/?fr=mhd_card" target="_blank">
-            <div class="title-text c-font-medium c-color-t">
-                百度热榜
-            </div>
-        </a>
-        <a class="hot-refresh c-font-normal c-color-gray2"> 
-            <i class="c-icon">&#xe619;</i><span class="hot-refresh-text">换一换</span>
-        </a>
-    </div>
-      "##,
+          r##"
+        <div class="s-rank-title">
+          <a href="http://top.baidu.com/?fr=mhd_card" target="_blank">
+              <div class="title-text c-font-medium c-color-t">
+                  热榜
+              </div>
+          </a>
+          <a class="hot-refresh c-font-normal c-color-gray2"> 
+              <i class="c-icon">&#xe619;</i><span class="hot-refresh-text">换一换</span>
+          </a>
+      </div>
+        "##,
+        Default::default(),
+        Default::default()
       );
     })
   });

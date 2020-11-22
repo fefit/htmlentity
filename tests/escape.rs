@@ -1,4 +1,4 @@
-use htmlentity::entity::{decode, encode};
+use htmlentity::entity::{decode, encode, encode_default, Entities };
 
 #[test]
 fn test_escape() {
@@ -12,12 +12,12 @@ fn test_escape() {
       <h4>this is a title&lt;main&gt;</h4>
     </div>
   ";
-  let result = encode(content);
+  let result = encode_default(content);
   assert_eq!(decode(&result), content);
   // test 2
   let content = "<div>";
   let encoded_content = "&lt;div&gt;";
-  assert_eq!(encode(content), encoded_content);
+  assert_eq!(encode(content, Entities::SpecialChars, Default::default()), encoded_content);
   assert_eq!(decode(encoded_content), content);
 }
 
