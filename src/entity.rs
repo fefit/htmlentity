@@ -151,7 +151,7 @@ impl Entities{
   }
 }
 
-/// Encode the html entity.
+/// Encode a html code's characters into entities.
 ///
 /// # Examples
 ///
@@ -189,8 +189,8 @@ pub fn encode_default(content: &str) -> String {
 }
 
 /// Encode by filter functions.
-/// use the `filte_fn` to choose the character need to encode.
-/// use the `exclude_fn` to exclude characters you don't want to use named.
+/// Use the `filte_fn` to choose the character need to encode.
+/// Use the `exclude_fn` to exclude characters you don't want to use named.
 /// 
 /// # Examples
 ///
@@ -444,7 +444,7 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
   result
 }
 
-/// Decode html code entities to character, include `Decimal` `Hex` `Named`
+/// Decode a html code's entities into unicode characters, include the `Decimal` `Hex` `Named`.
 ///
 /// # Examples
 ///

@@ -19,6 +19,18 @@ fn test_escape() {
   let encoded_content = "&lt;div&gt;";
   assert_eq!(encode(content, Entities::SpecialChars, Default::default()), encoded_content);
   assert_eq!(decode(encoded_content), content);
+  // test 3
+  let content = "<div>";
+  let encoded_content = "&lt;&#x64;&#x69;&#x76;&gt;";
+  assert_eq!(encode(content, Entities::All, EncodeType::NamedOrHex), encoded_content);
+  assert_eq!(decode(encoded_content), content);
+}
+
+#[test]
+fn test_decode_named(){
+  // wrong named
+  let content = "#q123;";
+  assert_eq!(decode(content), content);
 }
 
 #[test]
@@ -40,17 +52,20 @@ fn test_decode_hex() {
   // wrong hex
   let content = "&#xa0fh;";
   assert_eq!(decode(content), content);
+  // wrong hex or decimal
+  let content = "&#a00;";
+  assert_eq!(decode(content), content);
 }
 
 #[test]
-fn test_decode_number() {
-  // number
+fn test_decode_decimal() {
+  // decimal
   let content = "&#8594;";
   assert_eq!(decode(content), "→");
-  // number with leading zeros
+  // decimal with leading zeros
   let content = "&#0008594;";
   assert_eq!(decode(content), "→");
-  // wrong number unicode ranges
+  // wrong decimal unicode ranges
   let content = "&#1114112;";
   assert_eq!(decode(content), content);
   let content = "&#56320;";
@@ -71,4 +86,11 @@ fn test_exclude_named(){
     Entities::SpecialChars.contains(&ch) 
   }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
   assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
+
+  // the same as the EncodeType::Decimal.
+  let html = "<div class='header'></div>";
+  let html_encoded = encode_filter(html, |ch|{
+    Entities::SpecialChars.contains(&ch) 
+  }, EncodeType::NamedOrDecimal, Some(|ch| Entities::SpecialChars.contains(&ch)));
+  assert_eq!(html_encoded, "&#60;div class=&#39;header&#39;&#62;&#60;/div&#62;");
 }
