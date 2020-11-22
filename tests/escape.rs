@@ -1,4 +1,4 @@
-use htmlentity::entity::{decode, encode, encode_default, Entities };
+use htmlentity::entity::{decode, encode, encode_default, encode_filter, EncodeType, NOOP, Entities };
 
 #[test]
 fn test_escape() {
@@ -55,4 +55,20 @@ fn test_decode_number() {
   assert_eq!(decode(content), content);
   let content = "&#56320;";
   assert_eq!(decode(content), content);
+}
+
+#[test]
+fn test_exclude_named(){
+  let html = "<div class='header'></div>";
+  let html_encoded = encode_filter(html, |ch|{
+    ch != '<' && Entities::SpecialChars.contains(&ch) 
+  }, EncodeType::Named, NOOP);
+  assert_eq!(html_encoded, "<div class=&apos;header&apos;&gt;</div&gt;");
+
+  // special characters, but exclude the single quote "'" use named.
+  let html = "<div class='header'></div>";
+  let html_encoded = encode_filter(html, |ch|{
+    Entities::SpecialChars.contains(&ch) 
+  }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
+  assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
 }

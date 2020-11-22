@@ -9,6 +9,7 @@ use wasm_bindgen::prelude::*;
 type SortedEntity = Vec<EntityItem>;
 type Positions = HashMap<u8, (usize, usize)>;
 
+/// NOOP is the None value of Option<dyn Fn(char)->bool>  
 pub const NOOP:Option<&dyn Fn(char) -> bool> = None::<&dyn Fn(char)->bool>;
 
 lazy_static! {
@@ -27,11 +28,30 @@ lazy_static! {
   };
 }
 
-/**
- * Encode,With replaced count
- * 将字符转化为html entity实体
- */
-pub fn encode_char<F>(ch: char, encode_type: EncodeType, filter_fn: Option<F>) -> String 
+/// Encode a character.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// 
+/// let character = '<';
+/// let char_encoded = encode_char(character, EncodeType::Named, NOOP);
+/// assert_eq!(char_encoded, "&lt;");
+/// 
+/// let character = '<';
+/// let char_encoded = encode_char(character, EncodeType::Decimal, NOOP);
+/// assert_eq!(char_encoded, "&#60;");
+///
+/// let character = '<';
+/// let char_encoded = encode_char(character, EncodeType::Hex, NOOP);
+/// assert_eq!(char_encoded, "&#x3c;");
+///
+/// let character = '<';
+/// let char_encoded = encode_char(character, EncodeType::Named, Some(|ch|ch == '<'));
+/// assert_eq!(char_encoded, "<");
+/// ```
+pub fn encode_char<F>(ch: char, encode_type: EncodeType, exclude_fn: Option<F>) -> String 
 where F: Fn(char) -> bool {
   use EncodeType::*;
   let encode_type = encode_type as u8;
@@ -39,8 +59,8 @@ where F: Fn(char) -> bool {
   let mut result = String::with_capacity(5);
   if encode_type & (Named as u8) > 0{
     let mut should_find_name = true;
-    if let Some(filter_fn) = filter_fn{
-      if filter_fn(ch){
+    if let Some(exclude_fn) = exclude_fn{
+      if exclude_fn(ch){
         should_find_name = false;
       }
     }
@@ -84,8 +104,9 @@ where F: Fn(char) -> bool {
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+/// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
 pub enum Entities{
-  SpecialCharsAndNoASCII = 6,
+  SpecialCharsAndNoASCII = 6, // default
   All = 1, // encode all
   NoASCII = 2,  // encode character not ascii
   SpecialChars = 4, // encode '<>&''
@@ -124,11 +145,26 @@ impl Entities{
       All => (true, None)
     }
   }
+  pub fn contains(&self, ch: &char) -> bool{
+    let (flag, _) = self.filter(ch, EncodeType::Decimal);
+    flag
+  }
 }
 
-/**
- * Encode
-*/
+/// Encode the html entity.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+///
+/// let html = "<div class='header'></div>";
+/// let html_encoded = encode(html, Entities::SpecialChars, EncodeType::Named);
+/// assert_eq!(html_encoded, "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+/// 
+/// let html_decoded = decode(&html_encoded);
+/// assert_eq!(html, html_decoded);
+/// ```
 pub fn encode(content: &str, entities: Entities, encode_type: EncodeType) -> String{
   let mut result = String::with_capacity(content.len() + 5);
   for ch in content.chars() {
@@ -147,22 +183,39 @@ pub fn encode(content: &str, entities: Entities, encode_type: EncodeType) -> Str
   result
 }
 
-/*
-* Alias for default
-*/
+/// Short for `encode(content, Entities::default(), EncodeType::default())`
 pub fn encode_default(content: &str) -> String {
   encode(content, Default::default(), Default::default())
 }
 
-/*
-* Encode with filter functions
-*/
-
-pub fn encode_filter<F>(content: &str, filter_char: F, encode_type: EncodeType, filter_name: Option<F>) -> String where F: Fn(char) -> bool{
+/// Encode by filter functions.
+/// use the `filte_fn` to choose the character need to encode.
+/// use the `exclude_fn` to exclude characters you don't want to use named.
+/// 
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// 
+/// let html = "<div class='header'></div>";
+/// let html_encoded = encode_filter(html, |ch|{
+///   // special characters but not '<'
+///   ch != '<' && Entities::SpecialChars.contains(&ch) 
+/// }, EncodeType::Named, NOOP);
+/// assert_eq!(html_encoded, "<div class=&apos;header&apos;&gt;</div&gt;");
+/// 
+/// // special characters, but exclude the single quote "'" use named.
+/// let html = "<div class='header'></div>";
+/// let html_encoded = encode_filter(html, |ch|{
+///   Entities::SpecialChars.contains(&ch) 
+/// }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
+/// assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
+/// ``` 
+pub fn encode_filter<F: Fn(char) -> bool, C: Fn(char) -> bool>(content: &str, filter_fn: F, encode_type: EncodeType, exclude_fn: Option<C>) -> String {
   let mut result = String::with_capacity(content.len() + 5);
   for ch in content.chars() {
-    if filter_char(ch){
-      result.push_str(&encode_char(ch, encode_type, filter_name.as_ref()));
+    if filter_fn(ch){
+      result.push_str(&encode_char(ch, encode_type, exclude_fn.as_ref()));
     }else{
       result.push(ch);
     }
@@ -239,6 +292,7 @@ enum EntityIn {
   Decimal,
   HexOrDecimal,
 }
+/// EncodeType: the output format type, default: `NamedOrDecimal`
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 #[derive(Copy, Clone)]
 pub enum EncodeType{
@@ -256,10 +310,18 @@ impl Default for EncodeType {
 }
 
 
-/**
- * Decode Chars
- * 将html实体转化为具体字符
- */
+/// Decode character list, replace the entity characters into a unicode character. 
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+///
+/// let char_list = vec!['<'];
+/// assert_eq!(decode_chars("&lt;".chars().collect::<Vec<char>>()), char_list);
+/// assert_eq!(decode_chars("&#60;".chars().collect::<Vec<char>>()), char_list);
+/// assert_eq!(decode_chars("&#x3c;".chars().collect::<Vec<char>>()), char_list);
+/// ```
 pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
   use EntityIn::*;
   let is_sorted = IS_SORTED.load(Ordering::SeqCst);
@@ -382,9 +444,18 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
   result
 }
 
-/**
- * Decode
- */
+/// Decode html code entities to character, include `Decimal` `Hex` `Named`
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+///
+/// let content = "<";
+/// assert_eq!(decode("&lt;"), content);
+/// assert_eq!(decode("&#60;"), content);
+/// assert_eq!(decode("&#x3c;"), content);
+/// ```
 pub fn decode(content: &str) -> String {
   let chars: Vec<char> = content.chars().collect();
   decode_chars(chars).into_iter().collect::<String>()

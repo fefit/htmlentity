@@ -4,8 +4,11 @@ name = "htmlentity"
 version = "0.1.0"
 authors = ["ganmin <jxz_211@163.com>"]
 keywords = ["entity", "html-entity", "html-escape", "html-encode", "html-decode"]
-description = "html entities encode and decode."
+categories = ["encoding", "parsing", "wasm"]
+description = "Encode a unicode character to html entity, decode html entity to a unicode character."
 repository = "https://github.com/fefit/htmlentity"
+homepage = "https://github.com/fefit/htmlentity"
+exclude = ["node/**/*.*","pkg/**/*.*", "build.sh", "codecov.yml", ".travis.yml"]
 license = "MIT"
 
 
