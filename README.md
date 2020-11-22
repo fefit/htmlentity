@@ -1,6 +1,9 @@
 # htmlentity
 html entity encode and decode.
 
+[![Build Status](https://travis-ci.com/fefit/htmlentity.svg?branch=main)](https://travis-ci.com/github/fefit/htmlentity)
+[![codecov](https://codecov.io/gh/fefit/htmlentity/branch/main/graph/badge.svg)](https://codecov.io/gh/fefit/htmlentity)
+
 ## How to use
 
 ```rust
