@@ -17,3 +17,7 @@ let html_decoded = decode(&html_encoded);
 assert_eq!(html, html_decoded);
 ```
 For more details, please see the document in [crates.io](https://crates.io) 
+
+## License
+
+[MIT License](./LICENSE).
