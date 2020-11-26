@@ -1,4 +1,6 @@
-use htmlentity::entity::{decode, encode, encode_default, encode_filter, EncodeType, NOOP, Entities };
+use htmlentity::entity::{
+  decode, encode, encode_default, encode_filter, EncodeType, Entities, NOOP,
+};
 
 #[test]
 fn test_escape() {
@@ -17,19 +19,38 @@ fn test_escape() {
   // test 2
   let content = "<div>";
   let encoded_content = "&lt;div&gt;";
-  assert_eq!(encode(content, Entities::SpecialChars, Default::default()), encoded_content);
+  assert_eq!(
+    encode(content, Entities::SpecialChars, Default::default()),
+    encoded_content
+  );
   assert_eq!(decode(encoded_content), content);
   // test 3
   let content = "<div>";
   let encoded_content = "&lt;&#x64;&#x69;&#x76;&gt;";
-  assert_eq!(encode(content, Entities::All, EncodeType::NamedOrHex), encoded_content);
+  assert_eq!(
+    encode(content, Entities::All, EncodeType::NamedOrHex),
+    encoded_content
+  );
   assert_eq!(decode(encoded_content), content);
+  // test 4
+  let content = "\t<div>";
+  let encoded_content = encode_filter(
+    content,
+    |_ch: char| true,
+    EncodeType::Named,
+    Some(|ch| ch == '<'),
+  );
+  assert_eq!(encoded_content, "&Tab;<div&gt;");
 }
 
 #[test]
-fn test_decode_named(){
+fn test_decode_named() {
   // wrong named
-  let content = "#q123;";
+  let content = "&#q123;";
+  assert_eq!(decode(content), content);
+  let content = "&123;";
+  assert_eq!(decode(content), content);
+  let content = "&q123;";
   assert_eq!(decode(content), content);
 }
 
@@ -73,24 +94,39 @@ fn test_decode_decimal() {
 }
 
 #[test]
-fn test_exclude_named(){
+fn test_exclude_named() {
   let html = "<div class='header'></div>";
-  let html_encoded = encode_filter(html, |ch|{
-    ch != '<' && Entities::SpecialChars.contains(&ch) 
-  }, EncodeType::Named, NOOP);
+  let html_encoded = encode_filter(
+    html,
+    |ch| ch != '<' && Entities::SpecialChars.contains(&ch),
+    EncodeType::Named,
+    NOOP,
+  );
   assert_eq!(html_encoded, "<div class=&apos;header&apos;&gt;</div&gt;");
 
   // special characters, but exclude the single quote "'" use named.
   let html = "<div class='header'></div>";
-  let html_encoded = encode_filter(html, |ch|{
-    Entities::SpecialChars.contains(&ch) 
-  }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
-  assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
+  let html_encoded = encode_filter(
+    html,
+    |ch| Entities::SpecialChars.contains(&ch),
+    EncodeType::NamedOrDecimal,
+    Some(|ch| ch == '\''),
+  );
+  assert_eq!(
+    html_encoded,
+    "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;"
+  );
 
   // the same as the EncodeType::Decimal.
   let html = "<div class='header'></div>";
-  let html_encoded = encode_filter(html, |ch|{
-    Entities::SpecialChars.contains(&ch) 
-  }, EncodeType::NamedOrDecimal, Some(|ch| Entities::SpecialChars.contains(&ch)));
-  assert_eq!(html_encoded, "&#60;div class=&#39;header&#39;&#62;&#60;/div&#62;");
+  let html_encoded = encode_filter(
+    html,
+    |ch| Entities::SpecialChars.contains(&ch),
+    EncodeType::NamedOrDecimal,
+    Some(|ch| Entities::SpecialChars.contains(&ch)),
+  );
+  assert_eq!(
+    html_encoded,
+    "&#60;div class=&#39;header&#39;&#62;&#60;/div&#62;"
+  );
 }
