@@ -289,7 +289,7 @@ fn binary_insert(sorted: &mut SortedEntity, cur: EntityItem) {
 }
 
 #[derive(PartialEq, Eq)]
-enum EntityIn {
+pub enum EntityIn {
   Unkown,
   Named,
   Hex,
@@ -462,4 +462,71 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
 pub fn decode(content: &str) -> String {
   let chars: Vec<char> = content.chars().collect();
   decode_chars(chars).into_iter().collect::<String>()
+}
+
+#[derive(Default)]
+pub struct Entity {
+  entity_in: Option<EntityIn>,
+  pub characters: Vec<char>,
+  pub entity_type: Option<EncodeType>,
+  pub is_end: bool,
+}
+
+impl Entity {
+  pub fn new() -> Self {
+    Entity::default()
+  }
+  pub fn add(&mut self, ch: char) -> bool {
+    if self.is_end {
+      return false;
+    }
+    use EntityIn::*;
+    if let Some(entity_in) = &self.entity_in {
+      let mut is_in_entity = true;
+      match entity_in {
+        Named => {
+          if !ch.is_ascii_alphabetic() {
+            is_in_entity = false;
+          }
+        }
+        Hex | Decimal => match ch {
+          '0'..='9' => {}
+          'a'..='f' | 'A'..='F' if entity_in == &Hex => {}
+          _ => {
+            is_in_entity = false;
+          }
+        },
+        Unkown => {
+          if ch.is_ascii_alphabetic() {
+            self.entity_in = Some(Named);
+          } else if ch == '#' {
+            self.entity_in = Some(HexOrDecimal);
+          } else {
+            is_in_entity = false;
+          }
+        }
+        HexOrDecimal => match ch {
+          '0'..='9' => {
+            self.entity_in = Some(Decimal);
+          }
+          'x' | 'X' => {
+            self.entity_in = Some(Hex);
+          }
+          _ => {
+            is_in_entity = false;
+          }
+        },
+      };
+      if is_in_entity {
+        self.characters.push(ch);
+      }
+      return false;
+    }
+    if ch == '&' {
+      self.characters.push(ch);
+      self.entity_in = Some(Unkown);
+      return true;
+    }
+    false
+  }
 }
