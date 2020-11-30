@@ -230,19 +230,18 @@ pub fn encode_filter<F: Fn(char) -> bool, C: Fn(char) -> bool>(
 
 /**
  * Sort
- * 将entities排序成所需格式
  */
 fn sort_entities() {
   let mut sorted: SortedEntity = Vec::with_capacity(ENTITIES.len());
   let mut counts: Positions = HashMap::new();
   let mut firsts: Vec<u8> = Vec::with_capacity(52);
-  // 二分查找插入
+  // binary search
   for pair in &ENTITIES[..] {
     let entity = *pair;
     let chars = entity.0.as_bytes();
     let first = chars[0];
     binary_insert(&mut sorted, entity);
-    // 插入首字母个数到hashmap
+    // save the first character index to HashMap
     match counts.get_mut(&first) {
       Some((v, _)) => {
         *v += 1;
@@ -251,12 +250,12 @@ fn sort_entities() {
         counts.insert(first, (1, 0));
       }
     }
-    // 插入首字母到表
+    // insert
     if !firsts.contains(&first) {
       firsts.push(first);
     }
   }
-  // 整理首位序号
+  // sort
   firsts.sort_unstable();
   let mut cur_index: usize = 0;
   for char_code in firsts {
@@ -265,15 +264,15 @@ fn sort_entities() {
     *position = (cur_index, next_index);
     cur_index = next_index;
   }
-  // 赋值位置的HashMap
+  // save index to positions
   let mut positions = FIRST_POSITION.lock().unwrap();
   *positions = counts;
-  // 赋值排序好的实体
+  // save sorted entities
   let mut entities = DECODE_ENTITIES.lock().unwrap();
   *entities = sorted;
 }
 /**
- * 二分查找插入
+ * binary insert
  */
 fn binary_insert(sorted: &mut SortedEntity, cur: EntityItem) {
   let mut prev_index = 0;
@@ -326,123 +325,31 @@ impl Default for EncodeType {
 /// assert_eq!(decode_chars("&#x3c;".chars().collect::<Vec<char>>()), char_list);
 /// ```
 pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
-  use EntityIn::*;
-  let is_sorted = IS_SORTED.load(Ordering::SeqCst);
-  if !is_sorted {
-    sort_entities();
-    IS_SORTED.store(true, Ordering::SeqCst);
-  }
-  let sorted = DECODE_ENTITIES.lock().unwrap();
-  let firsts = FIRST_POSITION.lock().unwrap();
   let mut result: Vec<char> = Vec::with_capacity(chars.len());
-  let mut entity: Vec<char> = Vec::with_capacity(5);
+  let mut entity: Entity = Entity::new();
   let mut is_in_entity: bool = false;
-  let mut entity_in: EntityIn = Unkown;
   for ch in chars {
-    if !is_in_entity {
-      if ch == '&' {
+    if !is_in_entity{
+      if entity.add(ch){
         is_in_entity = true;
       } else {
         result.push(ch);
       }
     } else {
-      let mut is_entity_complete = false;
-      if ch != ';' {
-        match entity_in {
-          Named => {
-            if !ch.is_ascii_alphabetic() {
-              is_in_entity = false;
-            }
-          }
-          Hex | Decimal => match ch {
-            '0'..='9' => {}
-            'a'..='f' | 'A'..='F' if entity_in == Hex => {}
-            _ => {
-              is_in_entity = false;
-            }
-          },
-          Unkown => {
-            if ch.is_ascii_alphabetic() {
-              entity_in = Named;
-            } else if ch == '#' {
-              entity_in = HexOrDecimal;
-            } else {
-              is_in_entity = false;
-            }
-          }
-          HexOrDecimal => match ch {
-            '0'..='9' => {
-              entity_in = Decimal;
-            }
-            'x' | 'X' => {
-              entity_in = Hex;
-            }
-            _ => {
-              is_in_entity = false;
-            }
-          },
+      let is_wrong_entity = !entity.add(ch); 
+      if is_wrong_entity || entity.is_end{
+        result.extend(entity.get_chars());
+        if is_wrong_entity{
+          result.push(ch);
         }
-        if is_in_entity {
-          entity.push(ch);
-          continue;
-        }
-      } else {
-        // end of the entity
-        match entity_in {
-          Named => {
-            // try to find the entity
-            let first = entity[0] as u32 as u8;
-            if let Some(&(start_index, end_index)) = firsts.get(&first) {
-              let searched = entity.iter().collect::<String>();
-              if let Ok(find_index) = sorted[start_index..end_index]
-                .binary_search_by(|&(name, _)| name.cmp(searched.as_str()))
-              {
-                let last_index = start_index + find_index;
-                let (_, code) = sorted[last_index];
-                result.push(std::char::from_u32(code).unwrap());
-                is_entity_complete = true;
-              }
-            }
-          }
-          Hex | Decimal => {
-            let base_type: u32;
-            let numbers: &[char];
-            if entity_in == Hex {
-              base_type = 16;
-              // remove the prefix '#x'
-              numbers = &entity[2..];
-            } else {
-              base_type = 10;
-              // remove the prefix '#'
-              numbers = &entity[1..];
-            }
-            let numbers = numbers.iter().collect::<String>();
-            if let Ok(char_code) = i64::from_str_radix(&numbers, base_type) {
-              if (0..=0x10ffff).contains(&char_code) {
-                if let Some(last_ch) = std::char::from_u32(char_code as u32) {
-                  result.push(last_ch);
-                  is_entity_complete = true;
-                }
-              }
-            }
-          }
-          _ => {
-            // entity '&;'
-          }
-        }
-      }
-      entity_in = Unkown;
-      // wrong entity
-      if !is_entity_complete {
-        result.push('&');
-        result.extend(entity);
-        result.push(ch);
-        entity = Vec::with_capacity(5);
-      } else {
-        entity.clear();
         is_in_entity = false;
+        entity = Entity::new();
       }
     }
+  }
+  // still in entity at the end
+  if is_in_entity {
+    result.extend(entity.get_chars());
   }
   result
 }
@@ -463,19 +370,20 @@ pub fn decode(content: &str) -> String {
   let chars: Vec<char> = content.chars().collect();
   decode_chars(chars).into_iter().collect::<String>()
 }
-
+/// Entity struct
 #[derive(Default)]
 pub struct Entity {
-  entity_in: Option<EntityIn>,
+  pub entity_in: Option<EntityIn>,
   pub characters: Vec<char>,
-  pub entity_type: Option<EncodeType>,
   pub is_end: bool,
 }
 
 impl Entity {
+  /// Return an Entity struct, same as Entity::default()
   pub fn new() -> Self {
     Entity::default()
   }
+  /// `add(ch: char)`: check if the character is an allowed character
   pub fn add(&mut self, ch: char) -> bool {
     if self.is_end {
       return false;
@@ -483,50 +391,129 @@ impl Entity {
     use EntityIn::*;
     if let Some(entity_in) = &self.entity_in {
       let mut is_in_entity = true;
-      match entity_in {
-        Named => {
-          if !ch.is_ascii_alphabetic() {
-            is_in_entity = false;
+      if ch == ';'{
+        self.is_end = true;
+        return true;
+      } else {
+        match entity_in {
+          Named => {
+            if !ch.is_ascii_alphabetic() {
+              is_in_entity = false;
+            }
           }
+          Hex | Decimal => match ch {
+            '0'..='9' => {}
+            'a'..='f' | 'A'..='F' if entity_in == &Hex => {}
+            _ => {
+              is_in_entity = false;
+            }
+          },
+          Unkown => {
+            if ch.is_ascii_alphabetic() {
+              self.entity_in = Some(Named);
+            } else if ch == '#' {
+              self.entity_in = Some(HexOrDecimal);
+            } else {
+              is_in_entity = false;
+            }
+          }
+          HexOrDecimal => match ch {
+            '0'..='9' => {
+              self.entity_in = Some(Decimal);
+            }
+            'x' | 'X' => {
+              self.entity_in = Some(Hex);
+            }
+            _ => {
+              is_in_entity = false;
+            }
+          },
+        };
+        if is_in_entity {
+          self.characters.push(ch);
         }
-        Hex | Decimal => match ch {
-          '0'..='9' => {}
-          'a'..='f' | 'A'..='F' if entity_in == &Hex => {}
-          _ => {
-            is_in_entity = false;
-          }
-        },
-        Unkown => {
-          if ch.is_ascii_alphabetic() {
-            self.entity_in = Some(Named);
-          } else if ch == '#' {
-            self.entity_in = Some(HexOrDecimal);
-          } else {
-            is_in_entity = false;
-          }
-        }
-        HexOrDecimal => match ch {
-          '0'..='9' => {
-            self.entity_in = Some(Decimal);
-          }
-          'x' | 'X' => {
-            self.entity_in = Some(Hex);
-          }
-          _ => {
-            is_in_entity = false;
-          }
-        },
-      };
-      if is_in_entity {
-        self.characters.push(ch);
+        return is_in_entity;
       }
-      return false;
-    }
-    if ch == '&' {
-      self.characters.push(ch);
+    } else if ch == '&' {
       self.entity_in = Some(Unkown);
       return true;
     }
     false
+  }
+  /// `decode()`: decode the entity, if ok, return the unicode character.
+  pub fn decode(&self)-> Option<char>{
+    if !self.is_end{
+      return None;
+    }
+    use EntityIn::*;
+    let entity = &self.characters;
+    let entity_in = self.entity_in.as_ref().unwrap();
+    match entity_in {
+      Named => {
+        // try to find the entity
+        let first = entity[0] as u32 as u8;
+        // sort the named characters
+        let is_sorted = IS_SORTED.load(Ordering::SeqCst);
+        if !is_sorted {
+          sort_entities();
+          IS_SORTED.store(true, Ordering::SeqCst);
+        }
+        let sorted = DECODE_ENTITIES.lock().unwrap();
+        let firsts = FIRST_POSITION.lock().unwrap();
+        if let Some(&(start_index, end_index)) = firsts.get(&first) {
+          let searched = entity.iter().collect::<String>();
+          if let Ok(find_index) = sorted[start_index..end_index]
+            .binary_search_by(|&(name, _)| name.cmp(searched.as_str()))
+          {
+            let last_index = start_index + find_index;
+            let (_, code) = sorted[last_index];
+            return Some(std::char::from_u32(code).unwrap());
+          }
+        }
+      }
+      Hex | Decimal => {
+        let base_type: u32;
+        let numbers: &[char];
+        if entity_in == &Hex {
+          base_type = 16;
+          // remove the prefix '#x'
+          numbers = &entity[2..];
+        } else {
+          base_type = 10;
+          // remove the prefix '#'
+          numbers = &entity[1..];
+        }
+        if numbers.is_empty(){
+          // '&#;' '&#x;'
+          return None;
+        }
+        let numbers = numbers.iter().collect::<String>();
+        if let Ok(char_code) = i64::from_str_radix(&numbers, base_type) {
+          if (0..=0x10ffff).contains(&char_code) {
+            if let Some(last_ch) = std::char::from_u32(char_code as u32) {
+              return Some(last_ch);
+            }
+          }
+        }
+      }
+      _ => {
+        // entity '&;' '&#'
+      }
+    }
+    None
+  }
+  /// `get_chars()` return the characters of the entity,if it's a correct entity, it will return the Vec with the unicode character.
+  pub fn get_chars(&self) -> Vec<char>{
+    if let Some(ch) = self.decode(){
+      return vec![ch];
+    }
+    let is_end = self.is_end;
+    let mut result = Vec::with_capacity(self.characters.len() + 1 + is_end as usize);
+    result.push('&');
+    result.extend(&self.characters);
+    if is_end {
+      result.push(';');
+    }
+    result
   }
 }

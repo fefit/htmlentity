@@ -44,6 +44,13 @@ fn test_escape() {
 }
 
 #[test]
+fn test_wrong_entity(){
+  let content = "&#;";
+  assert_eq!(decode(content), content);
+  let content = "&;";
+  assert_eq!(decode(content), content);
+}
+#[test]
 fn test_decode_named() {
   // wrong named
   let content = "&#q123;";

@@ -3,6 +3,8 @@
  * the entity data
  */
 pub type EntityItem = (&'static str, u32);
+/// ENTITIES: https://dev.w3.org/html5/html-author/charref 
+/// Named entities list
 pub const ENTITIES: [EntityItem; 2031] = [
   ("Tab", 0x9),
   ("NewLine", 0xA),
