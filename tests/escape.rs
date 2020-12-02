@@ -1,5 +1,5 @@
 use htmlentity::entity::{
-  decode, encode, encode_default, encode_filter, EncodeType, Entities, NOOP,
+  decode, encode, encode_default, encode_filter, encode_with, EncodeType, EntitySet, NOOP,
 };
 
 #[test]
@@ -20,7 +20,7 @@ fn test_escape() {
   let content = "<div>";
   let encoded_content = "&lt;div&gt;";
   assert_eq!(
-    encode(content, Entities::SpecialChars, Default::default()),
+    encode(content, EntitySet::SpecialChars, Default::default()),
     encoded_content
   );
   assert_eq!(decode(encoded_content), content);
@@ -28,7 +28,7 @@ fn test_escape() {
   let content = "<div>";
   let encoded_content = "&lt;&#x64;&#x69;&#x76;&gt;";
   assert_eq!(
-    encode(content, Entities::All, EncodeType::NamedOrHex),
+    encode(content, EntitySet::All, EncodeType::NamedOrHex),
     encoded_content
   );
   assert_eq!(decode(encoded_content), content);
@@ -41,10 +41,19 @@ fn test_escape() {
     Some(|ch| ch == '<'),
   );
   assert_eq!(encoded_content, "&Tab;<div&gt;");
+  // test 5
+  let content = "\t<div>";
+  let encoded_content = encode_with(content, |ch: char| {
+    if ch == '<' {
+      return None;
+    }
+    Some(EncodeType::Named)
+  });
+  assert_eq!(encoded_content, "&Tab;<div&gt;");
 }
 
 #[test]
-fn test_wrong_entity(){
+fn test_wrong_entity() {
   let content = "&#;";
   assert_eq!(decode(content), content);
   let content = "&;";
@@ -105,7 +114,7 @@ fn test_exclude_named() {
   let html = "<div class='header'></div>";
   let html_encoded = encode_filter(
     html,
-    |ch| ch != '<' && Entities::SpecialChars.contains(&ch),
+    |ch| ch != '<' && EntitySet::SpecialChars.contains(&ch),
     EncodeType::Named,
     NOOP,
   );
@@ -115,7 +124,7 @@ fn test_exclude_named() {
   let html = "<div class='header'></div>";
   let html_encoded = encode_filter(
     html,
-    |ch| Entities::SpecialChars.contains(&ch),
+    |ch| EntitySet::SpecialChars.contains(&ch),
     EncodeType::NamedOrDecimal,
     Some(|ch| ch == '\''),
   );
@@ -128,9 +137,9 @@ fn test_exclude_named() {
   let html = "<div class='header'></div>";
   let html_encoded = encode_filter(
     html,
-    |ch| Entities::SpecialChars.contains(&ch),
+    |ch| EntitySet::SpecialChars.contains(&ch),
     EncodeType::NamedOrDecimal,
-    Some(|ch| Entities::SpecialChars.contains(&ch)),
+    Some(|ch| EntitySet::SpecialChars.contains(&ch)),
   );
   assert_eq!(
     html_encoded,

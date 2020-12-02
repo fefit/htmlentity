@@ -107,22 +107,22 @@ where
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 /// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
-pub enum Entities {
+pub enum EntitySet {
   SpecialCharsAndNoASCII = 6, // default
   All = 1,                    // encode all
   NoASCII = 2,                // encode character not ascii
   SpecialChars = 4,           // encode '<>&''
 }
 
-impl Default for Entities {
+impl Default for EntitySet {
   fn default() -> Self {
-    Entities::SpecialCharsAndNoASCII
+    EntitySet::SpecialCharsAndNoASCII
   }
 }
 
-impl Entities {
+impl EntitySet {
   pub fn filter(&self, ch: &char, encode_type: EncodeType) -> (bool, Option<String>) {
-    use Entities::*;
+    use EntitySet::*;
     match self {
       SpecialChars => {
         let encode_type = encode_type as u8;
@@ -136,11 +136,11 @@ impl Entities {
       }
       NoASCII => (*ch as u32 > 0x80, None),
       SpecialCharsAndNoASCII => {
-        let (need_encode, result) = Entities::NoASCII.filter(ch, encode_type);
+        let (need_encode, result) = EntitySet::NoASCII.filter(ch, encode_type);
         if need_encode {
           return (need_encode, result);
         }
-        Entities::SpecialChars.filter(ch, encode_type)
+        EntitySet::SpecialChars.filter(ch, encode_type)
       }
       All => (true, None),
     }
@@ -159,16 +159,16 @@ impl Entities {
 /// use htmlentity::entity::*;
 ///
 /// let html = "<div class='header'></div>";
-/// let html_encoded = encode(html, Entities::SpecialChars, EncodeType::Named);
+/// let html_encoded = encode(html, EntitySet::SpecialChars, EncodeType::Named);
 /// assert_eq!(html_encoded, "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
 ///
 /// let html_decoded = decode(&html_encoded);
 /// assert_eq!(html, html_decoded);
 /// ```
-pub fn encode(content: &str, entities: Entities, encode_type: EncodeType) -> String {
+pub fn encode(content: &str, entity_set: EntitySet, encode_type: EncodeType) -> String {
   let mut result = String::with_capacity(content.len() + 5);
   for ch in content.chars() {
-    let (need_encode, encoded) = entities.filter(&ch, encode_type);
+    let (need_encode, encoded) = entity_set.filter(&ch, encode_type);
     if need_encode {
       if let Some(encoded) = encoded {
         result.push_str(&encoded);
@@ -183,7 +183,7 @@ pub fn encode(content: &str, entities: Entities, encode_type: EncodeType) -> Str
   result
 }
 
-/// Short for `encode(content, Entities::default(), EncodeType::default())`
+/// Short for `encode(content, EntitySet::default(), EncodeType::default())`
 pub fn encode_default(content: &str) -> String {
   encode(content, Default::default(), Default::default())
 }
@@ -200,14 +200,14 @@ pub fn encode_default(content: &str) -> String {
 /// let html = "<div class='header'></div>";
 /// let html_encoded = encode_filter(html, |ch|{
 ///   // special characters but not '<'
-///   ch != '<' && Entities::SpecialChars.contains(&ch)
+///   ch != '<' && EntitySet::SpecialChars.contains(&ch)
 /// }, EncodeType::Named, NOOP);
 /// assert_eq!(html_encoded, "<div class=&apos;header&apos;&gt;</div&gt;");
 ///
 /// // special characters, but exclude the single quote "'" use named.
 /// let html = "<div class='header'></div>";
 /// let html_encoded = encode_filter(html, |ch|{
-///   Entities::SpecialChars.contains(&ch)
+///   EntitySet::SpecialChars.contains(&ch)
 /// }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
 /// assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
 /// ```
@@ -228,6 +228,37 @@ pub fn encode_filter<F: Fn(char) -> bool, C: Fn(char) -> bool>(
   result
 }
 
+/// encode with the Encoder function.
+///
+/// # Examples
+/// ```
+/// use htmlentity::entity::*;
+///
+/// let html = "<div class='header'></div>";
+/// let html_encoded = encode_with(html, |ch:char|{
+///   if(EntitySet::SpecialChars.contains(&ch)){
+///     return Some(EncodeType::Named);
+///   }
+///   None
+/// });
+/// assert_eq!(html_encoded, "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+///
+/// let html_decoded = decode(&html_encoded);
+/// ```
+pub fn encode_with<F>(content: &str, encoder: F) -> String
+where
+  F: Fn(char) -> Option<EncodeType>,
+{
+  let mut result = String::with_capacity(content.len() + 5);
+  for ch in content.chars() {
+    if let Some(encode_type) = encoder(ch) {
+      result.push_str(&encode_char(ch, encode_type, NOOP));
+    } else {
+      result.push(ch);
+    }
+  }
+  result
+}
 /**
  * Sort
  */
@@ -329,17 +360,17 @@ pub fn decode_chars(chars: Vec<char>) -> Vec<char> {
   let mut entity: Entity = Entity::new();
   let mut is_in_entity: bool = false;
   for ch in chars {
-    if !is_in_entity{
-      if entity.add(ch){
+    if !is_in_entity {
+      if entity.add(ch) {
         is_in_entity = true;
       } else {
         result.push(ch);
       }
     } else {
-      let is_wrong_entity = !entity.add(ch); 
-      if is_wrong_entity || entity.is_end{
+      let is_wrong_entity = !entity.add(ch);
+      if is_wrong_entity || entity.is_end {
         result.extend(entity.get_chars());
-        if is_wrong_entity{
+        if is_wrong_entity {
           result.push(ch);
         }
         is_in_entity = false;
@@ -391,7 +422,7 @@ impl Entity {
     use EntityIn::*;
     if let Some(entity_in) = &self.entity_in {
       let mut is_in_entity = true;
-      if ch == ';'{
+      if ch == ';' {
         self.is_end = true;
         return true;
       } else {
@@ -441,8 +472,8 @@ impl Entity {
     false
   }
   /// `decode()`: decode the entity, if ok, return the unicode character.
-  pub fn decode(&self)-> Option<char>{
-    if !self.is_end{
+  pub fn decode(&self) -> Option<char> {
+    if !self.is_end {
       return None;
     }
     use EntityIn::*;
@@ -483,7 +514,7 @@ impl Entity {
           // remove the prefix '#'
           numbers = &entity[1..];
         }
-        if numbers.is_empty(){
+        if numbers.is_empty() {
           // '&#;' '&#x;'
           return None;
         }
@@ -502,9 +533,9 @@ impl Entity {
     }
     None
   }
-  /// `get_chars()` return the characters of the entity,if it's a correct entity, it will return the Vec with the unicode character.
-  pub fn get_chars(&self) -> Vec<char>{
-    if let Some(ch) = self.decode(){
+  /// `get_chars()` return the characters of the entity,if it's a correct entity, it will return the Vec with the decoded unicode character, otherwise return all the characters.
+  pub fn get_chars(&self) -> Vec<char> {
+    if let Some(ch) = self.decode() {
       return vec![ch];
     }
     let is_end = self.is_end;
