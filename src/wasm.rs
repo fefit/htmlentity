@@ -1,4 +1,3 @@
-#![cfg(target_arch = "wasm32")]
 use crate::entity::{decode as r_decode, encode as r_encode, EncodeType, EntitySet};
 use wasm_bindgen::prelude::*;
 
@@ -30,4 +29,10 @@ pub fn encode(
 #[wasm_bindgen]
 pub fn decode(content: &str) -> IString {
   JsValue::from_str(&r_decode(content)).into()
+}
+
+#[wasm_bindgen]
+pub fn contains(entity_set: u8, ch: char) -> bool {
+  let entity_set: EntitySet = entity_set.into();
+  entity_set.contains(&ch)
 }

@@ -1,5 +1,9 @@
 use crate::data::{EntityItem, ENTITIES};
 use lazy_static::lazy_static;
+#[cfg(target_arch = "wasm32")]
+use num_derive::*;
+#[cfg(target_arch = "wasm32")]
+use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -105,13 +109,18 @@ where
   result
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(
+  target_arch = "wasm32",
+  wasm_bindgen,
+  derive(Clone, Copy, FromPrimitive, PartialEq, PartialOrd)
+)]
 /// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
 pub enum EntitySet {
-  SpecialCharsAndNoASCII = 6, // default
+  Empty = 0,
   All = 1,                    // encode all
   NoASCII = 2,                // encode character not ascii
   SpecialChars = 4,           // encode '<>&''
+  SpecialCharsAndNoASCII = 6, // default
 }
 
 impl Default for EntitySet {
@@ -121,6 +130,7 @@ impl Default for EntitySet {
 }
 
 impl EntitySet {
+  /// check if a character need encode by the encode type, and encode it if nessessary.
   pub fn filter(&self, ch: &char, encode_type: EncodeType) -> (bool, Option<String>) {
     use EntitySet::*;
     match self {
@@ -143,11 +153,29 @@ impl EntitySet {
         EntitySet::SpecialChars.filter(ch, encode_type)
       }
       All => (true, None),
+      Empty => (false, None),
     }
   }
+  /// check if the set contains the character.
   pub fn contains(&self, ch: &char) -> bool {
     let (flag, _) = self.filter(ch, EncodeType::Decimal);
     flag
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+/// impl for number style enum
+impl EntitySet {
+  fn value(&self) -> u8 {
+    *self as _
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+/// impl for number style enum, from u8
+impl From<u8> for EntitySet {
+  fn from(orig: u8) -> Self {
+    Self::from_u8(orig).unwrap_or(EntitySet::Empty)
   }
 }
 

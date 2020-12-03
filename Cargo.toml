@@ -17,6 +17,8 @@ lazy_static = "1.4.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { version = "0.2.68"  }
+num-derive = "0.3.3"
+num-traits = "0.2.14"
 
 [lib]
 path = "src/lib.rs"
