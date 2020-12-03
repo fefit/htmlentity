@@ -355,9 +355,14 @@ pub enum EntityIn {
   HexOrDecimal,
 }
 /// EncodeType: the output format type, default: `NamedOrDecimal`
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(
+  target_arch = "wasm32",
+  wasm_bindgen,
+  derive(FromPrimitive, PartialEq, PartialOrd)
+)]
 #[derive(Copy, Clone)]
 pub enum EncodeType {
+  Ignore = 0,
   Named = 0b00001,
   Hex = 0b00010,
   Decimal = 0b00100,
@@ -368,6 +373,22 @@ pub enum EncodeType {
 impl Default for EncodeType {
   fn default() -> Self {
     EncodeType::NamedOrDecimal
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+/// impl for number style enum
+impl EncodeType {
+  fn value(&self) -> u8 {
+    *self as _
+  }
+}
+
+#[cfg(target_arch = "wasm32")]
+/// impl for number style enum, from u8
+impl From<u8> for EncodeType {
+  fn from(orig: u8) -> Self {
+    Self::from_u8(orig).unwrap_or(EncodeType::Ignore)
   }
 }
 
