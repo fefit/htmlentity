@@ -346,7 +346,7 @@ fn binary_insert(sorted: &mut SortedEntity, cur: EntityItem) {
   (*sorted).insert(prev_index, cur);
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(PartialEq, Eq, Debug)]
 pub enum EntityIn {
   Unkown,
   Named,
@@ -451,7 +451,7 @@ pub fn decode(content: &str) -> String {
   decode_chars(chars).into_iter().collect::<String>()
 }
 /// Entity struct
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Entity {
   pub entity_in: Option<EntityIn>,
   pub characters: Vec<char>,
