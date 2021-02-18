@@ -21,13 +21,20 @@ lazy_static! {
   static ref DECODE_ENTITIES: Mutex<SortedEntity> = Mutex::new(vec![]);
   static ref FIRST_POSITION: Mutex<Positions> = Mutex::new(HashMap::new());
   // special chars
-  static ref SPECIAL_CHARS: HashMap<char, &'static str> = {
-    let mut map = HashMap::new();
+  static ref HTML_CHARS:  HashMap<char, &'static str> = {
+    let mut map = HashMap::with_capacity(3);
     map.insert('>', "&gt;");
     map.insert('<', "&lt;");
+    map.insert('&', "&amp;");
+    map
+  };
+  static ref SPECIAL_CHARS: HashMap<char, &'static str> = {
+    let mut map = HashMap::with_capacity(5);
     map.insert('"', "&quot;");
     map.insert('\'', "&apos;");
-    map.insert('&', "&amp;");
+    for (k, v) in HTML_CHARS.iter(){
+        map.insert(*k, *v);
+    }
     map
   };
 }
@@ -109,6 +116,21 @@ where
     result
 }
 
+fn filter_entity_set(
+    charset: &HashMap<char, &'static str>,
+    encode_type: EncodeType,
+    ch: &char,
+) -> (bool, Option<String>) {
+    let encode_type = encode_type as u8;
+    if let Some(&v) = charset.get(ch) {
+        if (encode_type & EncodeType::Named as u8) > 0 {
+            return (true, Some(v.into()));
+        }
+        return (true, None);
+    }
+    (false, None)
+}
+
 #[cfg_attr(
     target_arch = "wasm32",
     wasm_bindgen,
@@ -117,10 +139,16 @@ where
 /// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
 pub enum EntitySet {
     Empty = 0,
-    All = 1,                    // encode all
-    NoASCII = 2,                // encode character not ascii
-    SpecialChars = 4,           // encode '<>&''
-    SpecialCharsAndNoASCII = 6, // default
+    /// encode all
+    All = 1,
+    /// encode character not ascii                 
+    NoASCII = 2,
+    /// encode '<','>','&', main for entity in text node when call element's `innerHtml()` method                
+    Html = 3,
+    /// encode '<','>','&', '\'', '"'                
+    SpecialChars = 4,
+    /// this is default
+    SpecialCharsAndNoASCII = 6,
 }
 
 impl Default for EntitySet {
@@ -134,16 +162,8 @@ impl EntitySet {
     pub fn filter(&self, ch: &char, encode_type: EncodeType) -> (bool, Option<String>) {
         use EntitySet::*;
         match self {
-            SpecialChars => {
-                let encode_type = encode_type as u8;
-                if let Some(&v) = SPECIAL_CHARS.get(ch) {
-                    if (encode_type & EncodeType::Named as u8) > 0 {
-                        return (true, Some(v.into()));
-                    }
-                    return (true, None);
-                }
-                (false, None)
-            }
+            SpecialChars => filter_entity_set(&SPECIAL_CHARS, encode_type, ch),
+            Html => filter_entity_set(&HTML_CHARS, encode_type, ch),
             NoASCII => (*ch as u32 > 0x80, None),
             SpecialCharsAndNoASCII => {
                 let (need_encode, result) = EntitySet::NoASCII.filter(ch, encode_type);
