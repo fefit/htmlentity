@@ -1,39 +1,33 @@
 use crate::data::{EntityItem, ENTITIES};
 use lazy_static::lazy_static;
-#[cfg(target_arch = "wasm32")]
-use num_derive::*;
-#[cfg(target_arch = "wasm32")]
-use num_traits::FromPrimitive;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
 type SortedEntity = Vec<EntityItem>;
 type Positions = HashMap<u8, (usize, usize)>;
 
 /// NOOP is the None value of Option<dyn Fn(char)->bool>  
-pub const NOOP: Option<&dyn Fn(char) -> bool> = None::<&dyn Fn(char) -> bool>;
+pub const NOOP: Option<&dyn Fn(&char) -> bool> = None::<&dyn Fn(&char) -> bool>;
+pub type CharEntityHash = HashMap<char, Vec<char>>;
 
 lazy_static! {
   static ref IS_SORTED: AtomicBool = AtomicBool::new(false);
   static ref DECODE_ENTITIES: Mutex<SortedEntity> = Mutex::new(vec![]);
   static ref FIRST_POSITION: Mutex<Positions> = Mutex::new(HashMap::new());
   // special chars
-  static ref HTML_CHARS:  HashMap<char, &'static str> = {
+  static ref HTML_CHARS:  CharEntityHash = {
     let mut map = HashMap::with_capacity(3);
-    map.insert('>', "&gt;");
-    map.insert('<', "&lt;");
-    map.insert('&', "&amp;");
+    map.insert('>', vec!['&', 'g', 't', ';']);
+    map.insert('<', vec!['&', 'l', 't', ';']);
+    map.insert('&', vec!['&', 'a', 'm', 'p', ';']);
     map
   };
-  static ref SPECIAL_CHARS: HashMap<char, &'static str> = {
+  static ref SPECIAL_CHARS: CharEntityHash = {
     let mut map = HashMap::with_capacity(5);
-    map.insert('"', "&quot;");
-    map.insert('\'', "&apos;");
+    map.insert('"', vec!['&', 'q', 'u', 'o', 't', ';']);
+    map.insert('\'', vec!['&', 'a', 'p', 'o', 's', ';']);
     for (k, v) in HTML_CHARS.iter(){
-        map.insert(*k, *v);
+        map.insert(*k, v.clone());
     }
     map
   };
@@ -47,33 +41,34 @@ lazy_static! {
 /// use htmlentity::entity::*;
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(character, EncodeType::Named, NOOP);
+/// let char_encoded = encode_char(&character, &EncodeType::Named, NOOP).iter().collect::<String>();
 /// assert_eq!(char_encoded, "&lt;");
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(character, EncodeType::Decimal, NOOP);
+/// let char_encoded = encode_char(&character, &EncodeType::Decimal, NOOP).iter().collect::<String>();
 /// assert_eq!(char_encoded, "&#60;");
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(character, EncodeType::Hex, NOOP);
+/// let char_encoded = encode_char(&character, &EncodeType::Hex, NOOP).iter().collect::<String>();
 /// assert_eq!(char_encoded, "&#x3c;");
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(character, EncodeType::Named, Some(|ch|ch == '<'));
+/// let char_encoded = encode_char(&character, &EncodeType::Named, Some(|ch|*ch == '<')).iter().collect::<String>();
 /// assert_eq!(char_encoded, "<");
 /// ```
-pub fn encode_char<F>(ch: char, encode_type: EncodeType, exclude_fn: Option<F>) -> String
+pub fn encode_char<F>(ch: &char, encode_type: &EncodeType, exclude_fn: Option<F>) -> Vec<char>
 where
-    F: Fn(char) -> bool,
+    F: Fn(&char) -> bool,
 {
     use EncodeType::*;
-    let encode_type = encode_type as u8;
+    let encode_type = *encode_type as u8;
+    let ch = *ch;
     let char_code = ch as u32;
-    let mut result = String::with_capacity(5);
+
     if encode_type & (Named as u8) > 0 {
         let mut should_find_name = true;
         if let Some(exclude_fn) = exclude_fn {
-            if exclude_fn(ch) {
+            if exclude_fn(&ch) {
                 should_find_name = false;
             }
         }
@@ -95,47 +90,44 @@ where
                     }
                 }
                 let (entity, _) = ENTITIES[first_index];
-                result.push('&');
-                result.push_str(entity);
+                let mut result = vec!['&'];
+                result.extend(entity.chars());
                 result.push(';');
                 return result;
             }
         }
     }
     if encode_type & (Hex as u8) > 0 {
-        let hex = format!("&#x{:x};", char_code);
-        result.push_str(&hex);
+        let mut result = vec!['&', '#', 'x'];
+        let hex = format!("{:x}", char_code);
+        result.extend(hex.chars());
+        result.push(';');
         return result;
     }
     if encode_type & (Decimal as u8) > 0 {
-        let dec = format!("&#{};", char_code);
-        result.push_str(&dec);
+        let mut result = vec!['&', '#'];
+        result.extend(char_code.to_string().chars());
+        result.push(';');
         return result;
     }
-    result.push(ch);
-    result
+    vec![ch]
 }
 
 fn filter_entity_set(
-    charset: &HashMap<char, &'static str>,
-    encode_type: EncodeType,
+    charset: &CharEntityHash,
+    encode_type: &EncodeType,
     ch: &char,
-) -> (bool, Option<String>) {
-    let encode_type = encode_type as u8;
-    if let Some(&v) = charset.get(ch) {
+) -> (bool, Option<Vec<char>>) {
+    let encode_type = *encode_type as u8;
+    if let Some(v) = charset.get(ch) {
         if (encode_type & EncodeType::Named as u8) > 0 {
-            return (true, Some(v.into()));
+            return (true, Some(v.clone()));
         }
         return (true, None);
     }
     (false, None)
 }
 
-#[cfg_attr(
-    target_arch = "wasm32",
-    wasm_bindgen,
-    derive(Clone, Copy, FromPrimitive, PartialEq, PartialOrd)
-)]
 /// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
 pub enum EntitySet {
     Empty = 0,
@@ -159,7 +151,7 @@ impl Default for EntitySet {
 
 impl EntitySet {
     /// check if a character need encode by the encode type, and encode it if nessessary.
-    pub fn filter(&self, ch: &char, encode_type: EncodeType) -> (bool, Option<String>) {
+    pub fn filter(&self, ch: &char, encode_type: &EncodeType) -> (bool, Option<Vec<char>>) {
         use EntitySet::*;
         match self {
             SpecialChars => filter_entity_set(&SPECIAL_CHARS, encode_type, ch),
@@ -178,24 +170,8 @@ impl EntitySet {
     }
     /// check if the set contains the character.
     pub fn contains(&self, ch: &char) -> bool {
-        let (flag, _) = self.filter(ch, EncodeType::Decimal);
+        let (flag, _) = self.filter(ch, &EncodeType::Decimal);
         flag
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// impl for number style enum
-impl EntitySet {
-    fn value(&self) -> u8 {
-        *self as _
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// impl for number style enum, from u8
-impl From<u8> for EntitySet {
-    fn from(orig: u8) -> Self {
-        Self::from_u8(orig).unwrap_or(EntitySet::Empty)
     }
 }
 
@@ -213,27 +189,30 @@ impl From<u8> for EntitySet {
 /// let html_decoded = decode(&html_encoded);
 /// assert_eq!(html, html_decoded);
 /// ```
-pub fn encode(content: &str, entity_set: EntitySet, encode_type: EncodeType) -> String {
-    let mut result = String::with_capacity(content.len() + 5);
-    for ch in content.chars() {
+pub fn encode(content: &[char], entity_set: &EntitySet, encode_type: &EncodeType) -> Vec<char> {
+    let mut result = Vec::with_capacity(content.len() + 5);
+    for ch in content {
         let (need_encode, encoded) = entity_set.filter(&ch, encode_type);
         if need_encode {
             if let Some(encoded) = encoded {
-                result.push_str(&encoded);
+                result.extend_from_slice(&encoded[..]);
             } else {
                 let encoded = encode_char(ch, encode_type, NOOP);
-                result.push_str(&encoded);
+                result.extend_from_slice(&encoded[..]);
             }
         } else {
-            result.push(ch);
+            result.push(*ch);
         }
     }
     result
 }
 
+// pub fn encode_chars(content: &[char], entity_set: EntitySet, encode_type: EncodeType) -> Vec<char> {
+// }
+
 /// Short for `encode(content, EntitySet::default(), EncodeType::default())`
-pub fn encode_default(content: &str) -> String {
-    encode(content, Default::default(), Default::default())
+pub fn encode_default(content: &[char]) -> Vec<char> {
+    encode(content, &Default::default(), &Default::default())
 }
 
 /// Encode by filter functions.
@@ -259,18 +238,18 @@ pub fn encode_default(content: &str) -> String {
 /// }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
 /// assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
 /// ```
-pub fn encode_filter<F: Fn(char) -> bool, C: Fn(char) -> bool>(
-    content: &str,
+pub fn encode_filter<F: Fn(&char) -> bool, C: Fn(&char) -> bool>(
+    content: &[char],
     filter_fn: F,
-    encode_type: EncodeType,
+    encode_type: &EncodeType,
     exclude_fn: Option<C>,
-) -> String {
-    let mut result = String::with_capacity(content.len() + 5);
-    for ch in content.chars() {
+) -> Vec<char> {
+    let mut result: Vec<char> = Vec::with_capacity(content.len() + 5);
+    for ch in content {
         if filter_fn(ch) {
-            result.push_str(&encode_char(ch, encode_type, exclude_fn.as_ref()));
+            result.extend_from_slice(&encode_char(ch, encode_type, exclude_fn.as_ref()));
         } else {
-            result.push(ch);
+            result.push(*ch);
         }
     }
     result
@@ -293,16 +272,16 @@ pub fn encode_filter<F: Fn(char) -> bool, C: Fn(char) -> bool>(
 ///
 /// let html_decoded = decode(&html_encoded);
 /// ```
-pub fn encode_with<F>(content: &str, encoder: F) -> String
+pub fn encode_with<F>(content: &[char], encoder: F) -> Vec<char>
 where
-    F: Fn(char) -> Option<EncodeType>,
+    F: Fn(&char) -> Option<EncodeType>,
 {
-    let mut result = String::with_capacity(content.len() + 5);
-    for ch in content.chars() {
+    let mut result: Vec<char> = Vec::with_capacity(content.len() + 5);
+    for ch in content {
         if let Some(encode_type) = encoder(ch) {
-            result.push_str(&encode_char(ch, encode_type, NOOP));
+            result.extend_from_slice(&encode_char(ch, &encode_type, NOOP));
         } else {
-            result.push(ch);
+            result.push(*ch);
         }
     }
     result
@@ -375,11 +354,6 @@ pub enum EntityIn {
     HexOrDecimal,
 }
 /// EncodeType: the output format type, default: `NamedOrDecimal`
-#[cfg_attr(
-    target_arch = "wasm32",
-    wasm_bindgen,
-    derive(FromPrimitive, PartialEq, PartialOrd)
-)]
 #[derive(Copy, Clone)]
 pub enum EncodeType {
     Ignore = 0,
@@ -393,22 +367,6 @@ pub enum EncodeType {
 impl Default for EncodeType {
     fn default() -> Self {
         EncodeType::NamedOrDecimal
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// impl for number style enum
-impl EncodeType {
-    fn value(&self) -> u8 {
-        *self as _
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-/// impl for number style enum, from u8
-impl From<u8> for EncodeType {
-    fn from(orig: u8) -> Self {
-        Self::from_u8(orig).unwrap_or(EncodeType::Ignore)
     }
 }
 
@@ -462,13 +420,13 @@ pub fn decode_chars(chars: &[char]) -> Vec<char> {
 /// use htmlentity::entity::*;
 ///
 /// let content = "<";
-/// assert_eq!(decode("&lt;"), content);
-/// assert_eq!(decode("&#60;"), content);
-/// assert_eq!(decode("&#x3c;"), content);
+/// assert_eq!(decode("&lt;").iter().collect::<String>(), content);
+/// assert_eq!(decode("&#60;").iter().collect::<String>(), content);
+/// assert_eq!(decode("&#x3c;").iter().collect::<String>(), content);
 /// ```
-pub fn decode(content: &str) -> String {
+pub fn decode(content: &str) -> Vec<char> {
     let chars: Vec<char> = content.chars().collect();
-    decode_chars(&chars).into_iter().collect::<String>()
+    decode_chars(&chars)
 }
 /// Entity struct
 #[derive(Default)]
