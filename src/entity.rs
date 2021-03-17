@@ -41,22 +41,22 @@ lazy_static! {
 /// use htmlentity::entity::*;
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(&character, &EncodeType::Named, NOOP).iter().collect::<String>();
+/// let char_encoded = encode_char(&character, &EncodeType::Named, &NOOP).iter().collect::<String>();
 /// assert_eq!(char_encoded, "&lt;");
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(&character, &EncodeType::Decimal, NOOP).iter().collect::<String>();
+/// let char_encoded = encode_char(&character, &EncodeType::Decimal, &NOOP).iter().collect::<String>();
 /// assert_eq!(char_encoded, "&#60;");
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(&character, &EncodeType::Hex, NOOP).iter().collect::<String>();
+/// let char_encoded = encode_char(&character, &EncodeType::Hex, &NOOP).iter().collect::<String>();
 /// assert_eq!(char_encoded, "&#x3c;");
 ///
 /// let character = '<';
-/// let char_encoded = encode_char(&character, &EncodeType::Named, Some(|ch|*ch == '<')).iter().collect::<String>();
+/// let char_encoded = encode_char(&character, &EncodeType::Named, &Some(|ch:&char|*ch == '<')).iter().collect::<String>();
 /// assert_eq!(char_encoded, "<");
 /// ```
-pub fn encode_char<F>(ch: &char, encode_type: &EncodeType, exclude_fn: Option<F>) -> Vec<char>
+pub fn encode_char<F>(ch: &char, encode_type: &EncodeType, exclude_fn: &Option<F>) -> Vec<char>
 where
     F: Fn(&char) -> bool,
 {
@@ -184,20 +184,50 @@ impl EntitySet {
 ///
 /// let html = "<div class='header'></div>";
 /// let html_encoded = encode(html, EntitySet::SpecialChars, EncodeType::Named);
-/// assert_eq!(html_encoded, "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+/// assert_eq!(html_encoded.iter().collect::<String>(), "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
 ///
-/// let html_decoded = decode(&html_encoded);
-/// assert_eq!(html, html_decoded);
+/// let html_decoded = decode_chars(&html_encoded);
+/// assert_eq!(html, html_decoded.iter().collect::<String>());
 /// ```
-pub fn encode(content: &[char], entity_set: &EntitySet, encode_type: &EncodeType) -> Vec<char> {
+pub fn encode(content: &str, entity_set: EntitySet, encode_type: EncodeType) -> Vec<char> {
     let mut result = Vec::with_capacity(content.len() + 5);
-    for ch in content {
-        let (need_encode, encoded) = entity_set.filter(&ch, encode_type);
+    for ch in content.chars() {
+        let (need_encode, encoded) = entity_set.filter(&ch, &encode_type);
         if need_encode {
             if let Some(encoded) = encoded {
                 result.extend_from_slice(&encoded[..]);
             } else {
-                let encoded = encode_char(ch, encode_type, NOOP);
+                let encoded = encode_char(&ch, &encode_type, &NOOP);
+                result.extend_from_slice(&encoded[..]);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+///
+/// let html = "<div class='header'></div>";
+/// let html_encoded = encode_chars(&html.chars().collect::<Vec<char>>(), EntitySet::SpecialChars, EncodeType::Named);
+/// assert_eq!(html_encoded.iter().collect::<String>(), "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+///
+/// let html_decoded = decode_chars(&html_encoded);
+/// assert_eq!(html, html_decoded.iter().collect::<String>());
+/// ```
+pub fn encode_chars(content: &[char], entity_set: EntitySet, encode_type: EncodeType) -> Vec<char> {
+    let mut result = Vec::with_capacity(content.len() + 5);
+    for ch in content {
+        let (need_encode, encoded) = entity_set.filter(ch, &encode_type);
+        if need_encode {
+            if let Some(encoded) = encoded {
+                result.extend_from_slice(&encoded[..]);
+            } else {
+                let encoded = encode_char(ch, &encode_type, &NOOP);
                 result.extend_from_slice(&encoded[..]);
             }
         } else {
@@ -205,14 +235,6 @@ pub fn encode(content: &[char], entity_set: &EntitySet, encode_type: &EncodeType
         }
     }
     result
-}
-
-// pub fn encode_chars(content: &[char], entity_set: EntitySet, encode_type: EncodeType) -> Vec<char> {
-// }
-
-/// Short for `encode(content, EntitySet::default(), EncodeType::default())`
-pub fn encode_default(content: &[char]) -> Vec<char> {
-    encode(content, &Default::default(), &Default::default())
 }
 
 /// Encode by filter functions.
@@ -225,29 +247,29 @@ pub fn encode_default(content: &[char]) -> Vec<char> {
 /// use htmlentity::entity::*;
 ///
 /// let html = "<div class='header'></div>";
-/// let html_encoded = encode_filter(html, |ch|{
+/// let html_encoded = encode_filter(&html.chars().collect::<Vec<char>>(), |ch: &char|{
 ///   // special characters but not '<'
-///   ch != '<' && EntitySet::SpecialChars.contains(&ch)
+///   *ch != '<' && EntitySet::SpecialChars.contains(ch)
 /// }, EncodeType::Named, NOOP);
-/// assert_eq!(html_encoded, "<div class=&apos;header&apos;&gt;</div&gt;");
+/// assert_eq!(html_encoded.iter().collect::<String>(), "<div class=&apos;header&apos;&gt;</div&gt;");
 ///
 /// // special characters, but exclude the single quote "'" use named.
 /// let html = "<div class='header'></div>";
-/// let html_encoded = encode_filter(html, |ch|{
-///   EntitySet::SpecialChars.contains(&ch)
-/// }, EncodeType::NamedOrDecimal, Some(|ch| ch == '\''));
-/// assert_eq!(html_encoded, "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
+/// let html_encoded = encode_filter(&html.chars().collect::<Vec<char>>(), |ch: &char|{
+///   EntitySet::SpecialChars.contains(ch)
+/// }, EncodeType::NamedOrDecimal, Some(|ch: &char| *ch == '\''));
+/// assert_eq!(html_encoded.iter().collect::<String>(), "&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;");
 /// ```
 pub fn encode_filter<F: Fn(&char) -> bool, C: Fn(&char) -> bool>(
     content: &[char],
     filter_fn: F,
-    encode_type: &EncodeType,
+    encode_type: EncodeType,
     exclude_fn: Option<C>,
 ) -> Vec<char> {
     let mut result: Vec<char> = Vec::with_capacity(content.len() + 5);
     for ch in content {
         if filter_fn(ch) {
-            result.extend_from_slice(&encode_char(ch, encode_type, exclude_fn.as_ref()));
+            result.extend_from_slice(&encode_char(ch, &encode_type, &exclude_fn.as_ref()));
         } else {
             result.push(*ch);
         }
@@ -262,15 +284,15 @@ pub fn encode_filter<F: Fn(&char) -> bool, C: Fn(&char) -> bool>(
 /// use htmlentity::entity::*;
 ///
 /// let html = "<div class='header'></div>";
-/// let html_encoded = encode_with(html, |ch:char|{
-///   if(EntitySet::SpecialChars.contains(&ch)){
+/// let html_encoded = encode_with(&html.chars().collect::<Vec<char>>(), |ch:&char|{
+///   if(EntitySet::SpecialChars.contains(ch)){
 ///     return Some(EncodeType::Named);
 ///   }
 ///   None
 /// });
-/// assert_eq!(html_encoded, "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+/// assert_eq!(html_encoded.iter().collect::<String>(), "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
 ///
-/// let html_decoded = decode(&html_encoded);
+/// let html_decoded = decode_chars(&html_encoded);
 /// ```
 pub fn encode_with<F>(content: &[char], encoder: F) -> Vec<char>
 where
@@ -279,7 +301,7 @@ where
     let mut result: Vec<char> = Vec::with_capacity(content.len() + 5);
     for ch in content {
         if let Some(encode_type) = encoder(ch) {
-            result.extend_from_slice(&encode_char(ch, &encode_type, NOOP));
+            result.extend_from_slice(&encode_char(ch, &encode_type, &NOOP));
         } else {
             result.push(*ch);
         }
@@ -383,33 +405,12 @@ impl Default for EncodeType {
 /// assert_eq!(decode_chars(&"&#x3c;".chars().collect::<Vec<char>>()), char_list);
 /// ```
 pub fn decode_chars(chars: &[char]) -> Vec<char> {
-    let mut result: Vec<char> = Vec::with_capacity(chars.len());
-    let mut entity: Entity = Entity::new();
-    let mut is_in_entity: bool = false;
-    for &ch in chars {
-        if !is_in_entity {
-            if entity.add(ch) {
-                is_in_entity = true;
-            } else {
-                result.push(ch);
-            }
-        } else {
-            let is_wrong_entity = !entity.add(ch);
-            if is_wrong_entity || entity.is_end {
-                result.extend(entity.get_chars());
-                if is_wrong_entity {
-                    result.push(ch);
-                }
-                is_in_entity = false;
-                entity = Entity::new();
-            }
-        }
+    let mut decoder = DecoderBuilder::new(chars.len());
+    for ch in chars {
+        decoder.add(*ch);
     }
-    // still in entity at the end
-    if is_in_entity {
-        result.extend(entity.get_chars());
-    }
-    result
+    decoder.eof();
+    decoder.data()
 }
 
 /// Decode a html code's entities into unicode characters, include the `Decimal` `Hex` `Named`.
@@ -425,8 +426,13 @@ pub fn decode_chars(chars: &[char]) -> Vec<char> {
 /// assert_eq!(decode("&#x3c;").iter().collect::<String>(), content);
 /// ```
 pub fn decode(content: &str) -> Vec<char> {
-    let chars: Vec<char> = content.chars().collect();
-    decode_chars(&chars)
+    let chars = content.chars();
+    let mut decoder = DecoderBuilder::new(content.len());
+    for ch in chars {
+        decoder.add(ch);
+    }
+    decoder.eof();
+    decoder.data()
 }
 /// Entity struct
 #[derive(Default)]
@@ -573,5 +579,57 @@ impl Entity {
             result.push(';');
         }
         result
+    }
+}
+
+struct DecoderBuilder {
+    entity: Entity,
+    data: Vec<char>,
+    is_in_entity: bool,
+}
+
+impl DecoderBuilder {
+    //	create a new decoder
+    fn new(total: usize) -> Self {
+        let data: Vec<char> = Vec::with_capacity(total);
+        let entity: Entity = Entity::new();
+        let is_in_entity: bool = false;
+        DecoderBuilder {
+            entity,
+            data,
+            is_in_entity,
+        }
+    }
+    // add a character
+    fn add(&mut self, ch: char) {
+        if !self.is_in_entity {
+            if self.entity.add(ch) {
+                self.is_in_entity = true;
+            } else {
+                self.data.push(ch);
+            }
+        } else {
+            let is_wrong_entity = !self.entity.add(ch);
+            if is_wrong_entity || self.entity.is_end {
+                let chars = self.entity.get_chars();
+                self.data.extend(chars);
+                if is_wrong_entity {
+                    self.data.push(ch);
+                }
+                self.is_in_entity = false;
+                self.entity = Entity::new();
+            }
+        }
+    }
+    // end the chars
+    fn eof(&mut self) {
+        if self.is_in_entity {
+            let chars = self.entity.get_chars();
+            self.data.extend(chars);
+        }
+    }
+    // return the data
+    fn data(self) -> Vec<char> {
+        self.data
     }
 }
