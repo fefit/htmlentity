@@ -1,7 +1,7 @@
 [package]
 edition = "2018"
 name = "htmlentity"
-version = "1.1.2"
+version = "1.1.3"
 authors = ["ganmin <jxz_211@163.com>"]
 keywords = ["entity", "html-entity", "html-escape", "html-encode", "html-decode"]
 categories = ["encoding", "parsing", "wasm"]

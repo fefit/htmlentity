@@ -1,19 +1,12 @@
-use crate::data::{EntityItem, ENTITIES};
+use crate::data::{ENTITIES, FIRST_LETTER_POSITION, LETTER_ORDERED_ENTITIES};
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-type SortedEntity = Vec<EntityItem>;
-type Positions = HashMap<u8, (usize, usize)>;
 
 /// NOOP is the None value of Option<dyn Fn(char)->bool>  
 pub const NOOP: Option<&dyn Fn(&char) -> bool> = None::<&dyn Fn(&char) -> bool>;
 pub type CharEntityHash = HashMap<char, Vec<char>>;
 
 lazy_static! {
-	static ref IS_SORTED: AtomicBool = AtomicBool::new(false);
-	static ref DECODE_ENTITIES: Mutex<SortedEntity> = Mutex::new(vec![]);
-	static ref FIRST_POSITION: Mutex<Positions> = Mutex::new(HashMap::new());
 	// special chars
 	static ref HTML_CHARS:  CharEntityHash = {
 		let mut map = HashMap::with_capacity(3);
@@ -64,7 +57,6 @@ where
 	let encode_type = *encode_type as u8;
 	let ch = *ch;
 	let char_code = ch as u32;
-
 	if encode_type & (Named as u8) > 0 {
 		let mut should_find_name = true;
 		if let Some(exclude_fn) = exclude_fn {
@@ -73,7 +65,7 @@ where
 			}
 		}
 		if should_find_name {
-			let finded = (&ENTITIES[..]).binary_search_by_key(&char_code, |&(_, code)| code);
+			let finded = ENTITIES.binary_search_by_key(&char_code, |&(_, code)| code);
 			if let Ok(index) = finded {
 				let mut first_index = index;
 				// find the first, short and lowercase
@@ -89,9 +81,9 @@ where
 						break;
 					}
 				}
-				let (entity, _) = ENTITIES[first_index];
+				let (entity, _) = &ENTITIES[first_index];
 				let mut result = vec!['&'];
-				result.extend(entity.chars());
+				result.extend(entity.chars().into_iter());
 				result.push(';');
 				return result;
 			}
@@ -308,64 +300,6 @@ where
 	}
 	result
 }
-/**
- * Sort
- */
-fn sort_entities() {
-	let mut sorted: SortedEntity = Vec::with_capacity(ENTITIES.len());
-	let mut counts: Positions = HashMap::new();
-	let mut firsts: Vec<u8> = Vec::with_capacity(52);
-	// binary search
-	for pair in &ENTITIES[..] {
-		let entity = *pair;
-		let chars = entity.0.as_bytes();
-		let first = chars[0];
-		binary_insert(&mut sorted, entity);
-		// save the first character index to HashMap
-		match counts.get_mut(&first) {
-			Some((v, _)) => {
-				*v += 1;
-			}
-			None => {
-				counts.insert(first, (1, 0));
-			}
-		}
-		// insert
-		if !firsts.contains(&first) {
-			firsts.push(first);
-		}
-	}
-	// sort
-	firsts.sort_unstable();
-	let mut cur_index: usize = 0;
-	for char_code in firsts {
-		let position = counts.get_mut(&char_code).unwrap();
-		let next_index = cur_index + position.0;
-		*position = (cur_index, next_index);
-		cur_index = next_index;
-	}
-	// save index to positions
-	let mut positions = FIRST_POSITION.lock().unwrap();
-	*positions = counts;
-	// save sorted entities
-	let mut entities = DECODE_ENTITIES.lock().unwrap();
-	*entities = sorted;
-}
-/**
- * binary insert
- */
-fn binary_insert(sorted: &mut SortedEntity, cur: EntityItem) {
-	let mut prev_index = 0;
-	let len = sorted.len();
-	if len > 0 {
-		let search = cur.0;
-		prev_index = match sorted[..].binary_search_by(|&(name, _)| name.cmp(search)) {
-			Ok(index) => index,
-			Err(index) => index,
-		};
-	}
-	(*sorted).insert(prev_index, cur);
-}
 
 #[derive(PartialEq, Eq)]
 pub enum EntityIn {
@@ -515,22 +449,15 @@ impl Entity {
 		match entity_in {
 			Named => {
 				// try to find the entity
-				let first = entity[0] as u32 as u8;
-				// sort the named characters
-				let is_sorted = IS_SORTED.load(Ordering::SeqCst);
-				if !is_sorted {
-					sort_entities();
-					IS_SORTED.store(true, Ordering::SeqCst);
-				}
-				let sorted = DECODE_ENTITIES.lock().unwrap();
-				let firsts = FIRST_POSITION.lock().unwrap();
-				if let Some(&(start_index, end_index)) = firsts.get(&first) {
-					let searched = entity.iter().collect::<String>();
-					if let Ok(find_index) = sorted[start_index..end_index]
-						.binary_search_by(|&(name, _)| name.cmp(searched.as_str()))
+				let first_letter = &entity[0];
+				let search = entity.iter().collect::<String>();
+				let search = search.as_str();
+				if let Some(&(start_index, end_index)) = FIRST_LETTER_POSITION.get(&first_letter) {
+					if let Ok(find_index) = LETTER_ORDERED_ENTITIES[start_index..end_index]
+						.binary_search_by(|(name, _)| name.cmp(&search))
 					{
 						let last_index = start_index + find_index;
-						let (_, code) = sorted[last_index];
+						let (_, code) = LETTER_ORDERED_ENTITIES[last_index];
 						return Some(std::char::from_u32(code).unwrap());
 					}
 				}
