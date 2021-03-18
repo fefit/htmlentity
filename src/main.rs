@@ -1,11 +1,10 @@
-/**
- * https://dev.w3.org/html5/html-author/charref
- * the entity data
- */
-pub type EntityItem = (&'static str, u32);
-/// ENTITIES: https://dev.w3.org/html5/html-author/charref
-/// Named entities list
-pub const ENTITIES: [EntityItem; 2031] = [
+use std::fmt;
+use std::fs;
+/// the generator of the `data.rs` file
+use std::{collections::HashMap, error::Error};
+
+type EntityItem = (&'static str, u32);
+const ENTITIES: [EntityItem; 2031] = [
 	("Tab", 0x9),
 	("NewLine", 0xA),
 	("excl", 0x21),
@@ -2038,3 +2037,140 @@ pub const ENTITIES: [EntityItem; 2031] = [
 	("yopf", 0x1D56A),
 	("zopf", 0x1D56B),
 ];
+
+#[derive(Debug)]
+struct EntityDisplay {
+	positions: HashMap<char, (usize, usize)>,
+	entities: Vec<&'static str>,
+	code_position: Vec<(u32, usize)>,
+}
+
+impl fmt::Display for EntityDisplay {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		let mut result: String = String::with_capacity(10000);
+		// output comments
+		let output_comments = r##"
+/**
+* https://dev.w3.org/html5/html-author/charref
+* the entity data
+*/
+"##;
+		result.push_str(&output_comments);
+		// output depend library
+		let output_dependence = r##"
+use lazy_static::lazy_static;
+use std::collections::HashMap;
+pub type FirstLetterPosition = HashMap<char, (usize, usize)>;
+pub type CharCodePosition = (u32, usize);
+"##;
+		result.push_str(&output_dependence);
+		// output entities
+		result.push_str(&format!(
+			"/// https://dev.w3.org/html5/html-author/charref \npub const ENTITIES:[&str; {}] = [\n",
+			self.entities.len()
+		));
+		for entity in &self.entities {
+			result.push_str(&format!("\t\"{}\",\n", entity));
+		}
+		result.push_str("];\n");
+		// output char code position
+		result.push_str(&format!(
+			"/// char code position \npub const CHAR_CODE_POSITION: [CharCodePosition; {}] = [\n",
+			self.code_position.len()
+		));
+		for pos in &self.code_position {
+			result.push_str(&format!("\t(0x{:x},{}),\n", pos.0, pos.1));
+		}
+		result.push_str("];\n");
+		// output code positions
+		result.push_str("lazy_static!{\n");
+		result.push_str("\tpub static ref FIRST_LETTER_POSITION: FirstLetterPosition = {\n");
+		result.push_str(&format!(
+			"\t\tlet mut data: FirstLetterPosition = HashMap::with_capacity({});\n",
+			self.positions.len()
+		));
+		for (ch, pos) in &self.positions {
+			result.push_str(&format!(
+				"\t\tdata.insert('{}',({},{}));\n",
+				ch, pos.0, pos.1
+			));
+		}
+		result.push_str("\t\tdata");
+		result.push_str("\n\t};\n}");
+		// output all
+		f.write_str(result.as_str())
+	}
+}
+/**
+ * binary insert
+ */
+fn binary_insert(sorted: &mut Vec<EntityItem>, cur: EntityItem) {
+	let mut prev_index = 0;
+	let len = sorted.len();
+	if len > 0 {
+		let search = cur.0;
+		prev_index = match sorted[..].binary_search_by(|&(name, _)| name.cmp(search)) {
+			Ok(index) => index,
+			Err(index) => index,
+		};
+	}
+	(*sorted).insert(prev_index, cur);
+}
+
+fn sort_entities() -> EntityDisplay {
+	let total = ENTITIES.len();
+	let mut sorted: Vec<EntityItem> = Vec::with_capacity(total);
+	let mut positions: HashMap<char, (usize, usize)> = HashMap::with_capacity(52);
+	let mut firsts: Vec<char> = Vec::with_capacity(52);
+	let mut code_position: Vec<(u32, usize)> = Vec::with_capacity(total);
+	let mut entities: Vec<&'static str> = Vec::with_capacity(total);
+	// binary search
+	for pair in &ENTITIES[..] {
+		let entity = *pair;
+		let chars = entity.0.as_bytes();
+		let first = chars[0] as char;
+		binary_insert(&mut sorted, entity);
+		// save the first character index to HashMap
+		match positions.get_mut(&first) {
+			Some((v, _)) => {
+				*v += 1;
+			}
+			None => {
+				positions.insert(first, (1, 0));
+			}
+		}
+		// insert
+		if !firsts.contains(&first) {
+			firsts.push(first);
+		}
+	}
+	// make positions
+	firsts.sort_unstable();
+	let mut cur_index: usize = 0;
+	for char_code in firsts {
+		let position = positions.get_mut(&char_code).unwrap();
+		let next_index = cur_index + position.0;
+		*position = (cur_index, next_index);
+		cur_index = next_index;
+	}
+	// make entities and charcode
+	for (index, &(entity, code)) in sorted.iter().enumerate() {
+		entities.push(entity);
+		code_position.push((code, index));
+	}
+	// sort code position
+	code_position.sort_by(|a, b| a.0.cmp(&b.0));
+	//
+	EntityDisplay {
+		positions,
+		code_position,
+		entities,
+	}
+}
+fn main() -> Result<(), Box<dyn Error>> {
+	let display = sort_entities();
+	let content = format!("{}", display);
+	// write file to rust rs
+	fs::write("./src/data.rs", content)?;
+	Ok(())
+}
