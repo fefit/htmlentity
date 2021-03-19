@@ -1,6 +1,6 @@
 use crate::data::{ENTITIES, FIRST_LETTER_POSITION, LETTER_ORDERED_ENTITIES};
 use lazy_static::lazy_static;
-use std::collections::HashMap;
+use std::{char, collections::HashMap};
 
 /// NOOP is the None value of Option<dyn Fn(char)->bool>  
 pub const NOOP: Option<&dyn Fn(&char) -> bool> = None::<&dyn Fn(&char) -> bool>;
@@ -22,6 +22,21 @@ lazy_static! {
 		for (k, v) in HTML_CHARS.iter(){
 				map.insert(*k, v.clone());
 		}
+		map
+	};
+	// normal name entity
+	static ref NORMAL_NAME_ENTITY_CHAR: HashMap<Vec<char>, char> = {
+		let mut map = HashMap::with_capacity(10);
+		map.insert(vec!['l', 't'], '<');
+		map.insert(vec!['L', 'T'], '<');
+		map.insert(vec!['g', 't'], '>');
+		map.insert(vec!['G', 'T'], '>');
+		map.insert(vec!['a', 'm', 'p'], '&');
+		map.insert(vec!['A', 'M', 'P'], '&');
+		map.insert(vec!['q', 'u', 'o', 't'], '"');
+		map.insert(vec!['Q', 'U', 'O', 'T'], '"');
+		map.insert(vec!['a', 'p', 'o', 's'], '\'');
+		map.insert(vec!['n', 'b', 's', 'p'], char::from_u32(0xa0).expect("0xa0 is a &nbsp; entity"));
 		map
 	};
 }
@@ -302,12 +317,10 @@ where
 }
 
 #[derive(PartialEq, Eq)]
-pub enum EntityIn {
-	Unkown,
+pub enum EntityType {
 	Named,
 	Hex,
 	Decimal,
-	HexOrDecimal,
 }
 /// EncodeType: the output format type, default: `NamedOrDecimal`
 #[derive(Copy, Clone)]
@@ -339,12 +352,41 @@ impl Default for EncodeType {
 /// assert_eq!(decode_chars(&"&#x3c;".chars().collect::<Vec<char>>()), char_list);
 /// ```
 pub fn decode_chars(chars: &[char]) -> Vec<char> {
-	let mut decoder = DecoderBuilder::new(chars.len());
-	for ch in chars {
-		decoder.add(*ch);
+	let mut data: Vec<char> = Vec::with_capacity(chars.len());
+	decode_chars_to(chars, &mut data);
+	data
+}
+/// decode chars to
+pub fn decode_chars_to(chars: &[char], data: &mut Vec<char>) {
+	let mut is_in_entity = false;
+	let mut start_index: usize = 0;
+	for (index, ch) in chars.iter().enumerate() {
+		if !is_in_entity {
+			if ch == &'&' {
+				start_index = index;
+				is_in_entity = true;
+			} else {
+				data.push(*ch);
+			}
+		} else if ch == &';' {
+			// entity end
+			let entity = &chars[start_index + 1..index];
+			if let Some(ch) = Entity::decode(&entity) {
+				// entity ok
+				data.push(ch);
+			} else {
+				// wrong entity
+				data.push('&');
+				data.extend_from_slice(entity);
+				data.push(';');
+			}
+			is_in_entity = false;
+		}
 	}
-	decoder.eof();
-	decoder.data()
+	// wrong entity at the end
+	if is_in_entity {
+		data.extend(&chars[start_index..]);
+	}
 }
 
 /// Decode a html code's entities into unicode characters, include the `Decimal` `Hex` `Named`.
@@ -360,101 +402,144 @@ pub fn decode_chars(chars: &[char]) -> Vec<char> {
 /// assert_eq!(decode("&#x3c;").iter().collect::<String>(), content);
 /// ```
 pub fn decode(content: &str) -> Vec<char> {
-	let chars = content.chars();
-	let mut decoder = DecoderBuilder::new(content.len());
-	for ch in chars {
-		decoder.add(ch);
+	let total = content.len();
+	let mut data: Vec<char> = Vec::with_capacity(total);
+	let mut entity: Vec<char> = Vec::with_capacity(5);
+	let mut is_in_entity = false;
+	for ch in content.chars() {
+		if !is_in_entity {
+			if ch == '&' {
+				is_in_entity = true;
+			} else {
+				data.push(ch);
+			}
+		} else {
+			// in entity
+			if ch == ';' {
+				if let Some(decode_char) = Entity::decode(&entity) {
+					data.push(decode_char);
+					entity.clear();
+				} else {
+					data.push('&');
+					data.append(&mut entity);
+					data.push(';');
+				}
+				is_in_entity = false;
+			} else {
+				entity.push(ch);
+			}
+		}
 	}
-	decoder.eof();
-	decoder.data()
+	// wrong entity at the end
+	if is_in_entity {
+		data.push('&');
+		data.extend(entity);
+	}
+	data
+}
+/// decode a content and append to the data string
+pub fn decode_to(content: &str, data: &mut String) {
+	let mut entity: Vec<char> = Vec::with_capacity(5);
+	let mut is_in_entity = false;
+	for ch in content.chars() {
+		if !is_in_entity {
+			if ch == '&' {
+				is_in_entity = true;
+			} else {
+				data.push(ch);
+			}
+		} else {
+			// in entity
+			if ch == ';' {
+				if let Some(decode_char) = Entity::decode(&entity) {
+					data.push(decode_char);
+					entity.clear();
+				} else {
+					data.push('&');
+					data.extend(entity);
+					data.push(';');
+					entity = Vec::with_capacity(5);
+				}
+				is_in_entity = false;
+			} else {
+				entity.push(ch);
+			}
+		}
+	}
+	// wrong entity at the end
+	if is_in_entity {
+		data.push('&');
+		data.extend(entity);
+	}
 }
 /// Entity struct
 #[derive(Default)]
-pub struct Entity {
-	pub entity_in: Option<EntityIn>,
-	pub characters: Vec<char>,
-	pub is_end: bool,
-}
+pub struct Entity;
 
 impl Entity {
-	/// Return an Entity struct, same as Entity::default()
-	pub fn new() -> Self {
-		Entity::default()
-	}
-	/// `add(ch: char)`: check if the character is an allowed character
-	pub fn add(&mut self, ch: char) -> bool {
-		if self.is_end {
-			return false;
-		}
-		use EntityIn::*;
-		if let Some(entity_in) = &self.entity_in {
-			let mut is_in_entity = true;
-			if ch == ';' {
-				self.is_end = true;
-				return true;
-			} else {
-				match entity_in {
-					Named => {
-						if !ch.is_ascii_alphabetic() {
-							is_in_entity = false;
-						}
-					}
-					Hex | Decimal => match ch {
-						'0'..='9' => {}
-						'a'..='f' | 'A'..='F' if entity_in == &Hex => {}
-						_ => {
-							is_in_entity = false;
-						}
-					},
-					Unkown => {
-						if ch.is_ascii_alphabetic() {
-							self.entity_in = Some(Named);
-						} else if ch == '#' {
-							self.entity_in = Some(HexOrDecimal);
-						} else {
-							is_in_entity = false;
-						}
-					}
-					HexOrDecimal => match ch {
-						'0'..='9' => {
-							self.entity_in = Some(Decimal);
-						}
-						'x' | 'X' => {
-							self.entity_in = Some(Hex);
-						}
-						_ => {
-							is_in_entity = false;
-						}
-					},
-				};
-				if is_in_entity {
-					self.characters.push(ch);
-				}
-				return is_in_entity;
-			}
-		} else if ch == '&' {
-			self.entity_in = Some(Unkown);
-			return true;
-		}
-		false
-	}
 	/// `decode()`: decode the entity, if ok, return the unicode character.
-	pub fn decode(&self) -> Option<char> {
-		if !self.is_end {
+	pub fn decode(chars: &[char]) -> Option<char> {
+		let total = chars.len();
+		if total == 0 {
 			return None;
 		}
-		use EntityIn::*;
-		let entity = &self.characters;
-		let entity_in = self.entity_in.as_ref().unwrap();
-		match entity_in {
+		// check type
+		let first = &chars[0];
+		let mut entity_type: EntityType = EntityType::Named;
+		if first.is_ascii_alphabetic() {
+			for ch in &chars[1..] {
+				if !ch.is_ascii_alphabetic() {
+					return None;
+				}
+			}
+		} else if first == &'#' && total > 1 {
+			let second = chars[1];
+			match second {
+				'0'..='9' => {
+					// decimal
+					for ch in &chars[2..] {
+						if !matches!(ch, '0'..='9') {
+							return None;
+						}
+					}
+					entity_type = EntityType::Decimal;
+				}
+				'x' | 'X' => {
+					// hex
+					if total > 2 {
+						for ch in &chars[2..] {
+							if !matches!(ch, 'a'..='f' | 'A'..='F' | '0'..='9') {
+								return None;
+							}
+						}
+						entity_type = EntityType::Hex;
+					} else {
+						return None;
+					}
+				}
+				_ => {
+					return None;
+				}
+			}
+		} else {
+			return None;
+		}
+		//
+		use EntityType::*;
+		match entity_type {
 			Named => {
+				// normal entity characters
+				if let Some(&ch) = NORMAL_NAME_ENTITY_CHAR.get(chars) {
+					return Some(ch);
+				}
 				// try to find the entity
-				let first_letter = &entity[0];
-				let search = entity.iter().collect::<String>();
+				let first_letter = &chars[0];
+				let search = chars.iter().collect::<String>();
 				let search = search.as_str();
 				if let Some(&(start_index, end_index)) = FIRST_LETTER_POSITION.get(&first_letter) {
-					if let Ok(find_index) = LETTER_ORDERED_ENTITIES[start_index..end_index]
-						.binary_search_by(|(name, _)| name.cmp(&search))
+					if let Some(find_index) = LETTER_ORDERED_ENTITIES[start_index..end_index]
+						.iter()
+						.position(|(name, _)| name == &search)
 					{
 						let last_index = start_index + find_index;
 						let (_, code) = LETTER_ORDERED_ENTITIES[last_index];
@@ -465,14 +550,14 @@ impl Entity {
 			Hex | Decimal => {
 				let base_type: u32;
 				let numbers: &[char];
-				if entity_in == &Hex {
+				if entity_type == Hex {
 					base_type = 16;
 					// remove the prefix '#x'
-					numbers = &entity[2..];
+					numbers = &chars[2..];
 				} else {
 					base_type = 10;
 					// remove the prefix '#'
-					numbers = &entity[1..];
+					numbers = &chars[1..];
 				}
 				if numbers.is_empty() {
 					// '&#;' '&#x;'
@@ -487,76 +572,7 @@ impl Entity {
 					}
 				}
 			}
-			_ => {
-				// entity '&;' '&#'
-			}
 		}
 		None
-	}
-	/// `get_chars()` return the characters of the entity,if it's a correct entity, it will return the Vec with the decoded unicode character, otherwise return all the characters.
-	pub fn get_chars(&self) -> Vec<char> {
-		if let Some(ch) = self.decode() {
-			return vec![ch];
-		}
-		let is_end = self.is_end;
-		let mut result = Vec::with_capacity(self.characters.len() + 1 + is_end as usize);
-		result.push('&');
-		result.extend(&self.characters);
-		if is_end {
-			result.push(';');
-		}
-		result
-	}
-}
-
-struct DecoderBuilder {
-	entity: Entity,
-	data: Vec<char>,
-	is_in_entity: bool,
-}
-
-impl DecoderBuilder {
-	//	create a new decoder
-	fn new(total: usize) -> Self {
-		let data: Vec<char> = Vec::with_capacity(total);
-		let entity: Entity = Entity::new();
-		let is_in_entity: bool = false;
-		DecoderBuilder {
-			entity,
-			data,
-			is_in_entity,
-		}
-	}
-	// add a character
-	fn add(&mut self, ch: char) {
-		if !self.is_in_entity {
-			if self.entity.add(ch) {
-				self.is_in_entity = true;
-			} else {
-				self.data.push(ch);
-			}
-		} else {
-			let is_wrong_entity = !self.entity.add(ch);
-			if is_wrong_entity || self.entity.is_end {
-				let chars = self.entity.get_chars();
-				self.data.extend(chars);
-				if is_wrong_entity {
-					self.data.push(ch);
-				}
-				self.is_in_entity = false;
-				self.entity = Entity::new();
-			}
-		}
-	}
-	// end the chars
-	fn eof(&mut self) {
-		if self.is_in_entity {
-			let chars = self.entity.get_chars();
-			self.data.extend(chars);
-		}
-	}
-	// return the data
-	fn data(self) -> Vec<char> {
-		self.data
 	}
 }

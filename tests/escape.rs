@@ -1,4 +1,7 @@
-use htmlentity::entity::{decode, encode, encode_filter, encode_with, EncodeType, EntitySet, NOOP};
+use htmlentity::entity::{
+	decode, decode_chars, decode_chars_to, decode_to, encode, encode_filter, encode_with, EncodeType,
+	EntitySet, NOOP,
+};
 
 fn decode_to_string(content: &str) -> String {
 	decode(content).iter().collect::<String>()
@@ -20,6 +23,16 @@ fn test_escape() {
 		decode_to_string(&result.iter().collect::<String>()),
 		content
 	);
+	assert_eq!(decode_chars(&result).iter().collect::<String>(), content);
+	// decode chars to
+	let mut decode_result: Vec<char> = Vec::new();
+	decode_chars_to(&result, &mut decode_result);
+	assert_eq!(decode_result.iter().collect::<String>(), content);
+	// decode
+	let now_content = result.iter().collect::<String>();
+	let mut result = String::new();
+	decode_to(&now_content, &mut result);
+	assert_eq!(result, content);
 	// test 2
 	let content = "<div>&nbsp;'\"</div>";
 	let encoded_content = "&lt;div&gt;&amp;nbsp;&apos;&quot;&lt;/div&gt;";
@@ -173,4 +186,19 @@ fn test_exclude_named() {
 		html_encoded,
 		"&#60;div class=&#39;header&#39;&#62;&#60;/div&#62;"
 	);
+}
+
+#[test]
+fn test_unexpected() {
+	assert_eq!(decode("&").iter().collect::<String>(), "&");
+	assert_eq!(decode("&;").iter().collect::<String>(), "&;");
+	assert_eq!(decode("&a0;").iter().collect::<String>(), "&a0;");
+	assert_eq!(decode("&0a;").iter().collect::<String>(), "&0a;");
+	assert_eq!(decode("&#").iter().collect::<String>(), "&#");
+	assert_eq!(decode("&#;").iter().collect::<String>(), "&#;");
+	assert_eq!(decode("&#a;").iter().collect::<String>(), "&#a;");
+	assert_eq!(decode("&#x;").iter().collect::<String>(), "&#x;");
+	assert_eq!(decode("&#xg;").iter().collect::<String>(), "&#xg;");
+	assert_eq!(decode("&#x0g;").iter().collect::<String>(), "&#x0g;");
+	assert_eq!(decode("abc&").iter().collect::<String>(), "abc&");
 }
