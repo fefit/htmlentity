@@ -1,42 +1,45 @@
-use crate::data::{ENTITIES, FIRST_LETTER_POSITION, LETTER_ORDERED_ENTITIES};
+use crate::{
+	data::{ENTITIES, FIRST_LETTER_POSITION, LETTER_ORDERED_ENTITIES},
+	types::{Byte, BytesCharEntity, EntityCharBytes},
+};
 use lazy_static::lazy_static;
 use std::{char, collections::HashMap};
 
 /// NOOP is the None value of Option<dyn Fn(char)->bool>  
 pub const NOOP: Option<&dyn Fn(&char) -> bool> = None::<&dyn Fn(&char) -> bool>;
-pub type CharEntityHash = HashMap<char, Vec<char>>;
 
 lazy_static! {
-	// special chars
-	static ref HTML_CHARS:  CharEntityHash = {
-		let mut map = HashMap::with_capacity(3);
-		map.insert('>', vec!['&', 'g', 't', ';']);
-		map.insert('<', vec!['&', 'l', 't', ';']);
-		map.insert('&', vec!['&', 'a', 'm', 'p', ';']);
+	// html bytes
+	static ref HTML_BYTES: EntityCharBytes  = {
+		let mut map: EntityCharBytes  = HashMap::with_capacity(3);
+		map.insert('>', b"&gt;");
+		map.insert('<', b"&lt;");
+		map.insert('&', b"&amp;");
 		map
 	};
-	static ref SPECIAL_CHARS: CharEntityHash = {
-		let mut map = HashMap::with_capacity(5);
-		map.insert('"', vec!['&', 'q', 'u', 'o', 't', ';']);
-		map.insert('\'', vec!['&', 'a', 'p', 'o', 's', ';']);
-		for (k, v) in HTML_CHARS.iter(){
+	// special bytes
+	static ref SPECIAL_BYTES: EntityCharBytes  = {
+		let mut map: EntityCharBytes  = HashMap::with_capacity(5);
+		map.insert('"', b"&quot;");
+		map.insert('\'', b"&apos;");
+		for (k, v) in HTML_BYTES.iter(){
 				map.insert(*k, v.clone());
 		}
 		map
 	};
 	// normal name entity
-	static ref NORMAL_NAME_ENTITY_CHAR: HashMap<Vec<char>, char> = {
-		let mut map = HashMap::with_capacity(10);
-		map.insert(vec!['l', 't'], '<');
-		map.insert(vec!['L', 'T'], '<');
-		map.insert(vec!['g', 't'], '>');
-		map.insert(vec!['G', 'T'], '>');
-		map.insert(vec!['a', 'm', 'p'], '&');
-		map.insert(vec!['A', 'M', 'P'], '&');
-		map.insert(vec!['q', 'u', 'o', 't'], '"');
-		map.insert(vec!['Q', 'U', 'O', 'T'], '"');
-		map.insert(vec!['a', 'p', 'o', 's'], '\'');
-		map.insert(vec!['n', 'b', 's', 'p'], char::from_u32(0xa0).expect("0xa0 is a &nbsp; entity"));
+	static ref NORMAL_NAME_ENTITY_BYTE: BytesCharEntity = {
+		let mut map: BytesCharEntity = HashMap::with_capacity(10);
+		map.insert(b"lt", '<');
+		map.insert(b"LT", '<');
+		map.insert(b"gt", '>');
+		map.insert(b"GT", '>');
+		map.insert(b"amp", '&');
+		map.insert(b"AMP", '&');
+		map.insert(b"quot", '"');
+		map.insert(b"QUOT", '"');
+		map.insert(b"apos", '\'');
+		map.insert(b"nbsp", 0xa0 as char);
 		map
 	};
 }
@@ -64,7 +67,7 @@ lazy_static! {
 /// let char_encoded = encode_char(&character, &EncodeType::Named, &Some(|ch:&char|*ch == '<')).iter().collect::<String>();
 /// assert_eq!(char_encoded, "<");
 /// ```
-pub fn encode_char<F>(ch: &char, encode_type: &EncodeType, exclude_fn: &Option<F>) -> Vec<char>
+pub fn encode_char<F>(ch: &char, encode_type: &EncodeType, exclude_fn: &Option<F>) -> Vec<Byte>
 where
 	F: Fn(&char) -> bool,
 {
@@ -96,32 +99,32 @@ where
 						break;
 					}
 				}
-				let (entity, _) = &ENTITIES[first_index];
-				let mut result = vec!['&'];
-				result.extend(entity.chars().into_iter());
-				result.push(';');
+				let &(entity, _) = &ENTITIES[first_index];
+				let mut result = vec![b'&'];
+				result.extend(entity);
+				result.push(b';');
 				return result;
 			}
 		}
 	}
 	if encode_type & (Hex as u8) > 0 {
-		let mut result = vec!['&', '#', 'x'];
+		let mut result = vec![b'&', b'#', b'x'];
 		let hex = format!("{:x}", char_code);
-		result.extend(hex.chars());
-		result.push(';');
+		result.extend(hex.as_bytes());
+		result.push(b';');
 		return result;
 	}
 	if encode_type & (Decimal as u8) > 0 {
-		let mut result = vec!['&', '#'];
+		let mut result = vec![b'&', b'#'];
 		result.extend(char_code.to_string().chars());
-		result.push(';');
+		result.push(b';');
 		return result;
 	}
 	vec![ch]
 }
 
 fn filter_entity_set(
-	charset: &CharEntityHash,
+	charset: &EntityCharBytes,
 	encode_type: &EncodeType,
 	ch: &char,
 ) -> (bool, Option<Vec<char>>) {
@@ -136,6 +139,7 @@ fn filter_entity_set(
 }
 
 /// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
+#[derive(Default)]
 pub enum EntitySet {
 	Empty = 0,
 	/// encode all
@@ -147,13 +151,8 @@ pub enum EntitySet {
 	/// encode '<','>','&', '\'', '"'                
 	SpecialChars = 4,
 	/// this is default
+	#[default]
 	SpecialCharsAndNoASCII = 6,
-}
-
-impl Default for EntitySet {
-	fn default() -> Self {
-		EntitySet::SpecialCharsAndNoASCII
-	}
 }
 
 impl EntitySet {
@@ -161,8 +160,8 @@ impl EntitySet {
 	pub fn filter(&self, ch: &char, encode_type: &EncodeType) -> (bool, Option<Vec<char>>) {
 		use EntitySet::*;
 		match self {
-			SpecialChars => filter_entity_set(&SPECIAL_CHARS, encode_type, ch),
-			Html => filter_entity_set(&HTML_CHARS, encode_type, ch),
+			SpecialChars => filter_entity_set(&SPECIAL_BYTES, encode_type, ch),
+			Html => filter_entity_set(&HTML_BYTES, encode_type, ch),
 			NoASCII => (*ch as u32 > 0x80, None),
 			SpecialCharsAndNoASCII => {
 				let (need_encode, result) = EntitySet::NoASCII.filter(ch, encode_type);
@@ -323,20 +322,15 @@ pub enum EntityType {
 	Decimal,
 }
 /// EncodeType: the output format type, default: `NamedOrDecimal`
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default)]
 pub enum EncodeType {
 	Ignore = 0,
 	Named = 0b00001,
 	Hex = 0b00010,
 	Decimal = 0b00100,
 	NamedOrHex = 0b00011,
+	#[default]
 	NamedOrDecimal = 0b00101,
-}
-
-impl Default for EncodeType {
-	fn default() -> Self {
-		EncodeType::NamedOrDecimal
-	}
 }
 
 /// Decode character list, replace the entity characters into a unicode character.
@@ -478,37 +472,37 @@ pub struct Entity;
 
 impl Entity {
 	/// `decode()`: decode the entity, if ok, return the unicode character.
-	pub fn decode(chars: &[char]) -> Option<char> {
-		let total = chars.len();
+	pub fn decode(bytes: &[Byte]) -> Option<char> {
+		let total = bytes.len();
 		if total == 0 {
 			return None;
 		}
 		// check type
-		let first = &chars[0];
+		let first = bytes[0];
 		let mut entity_type: EntityType = EntityType::Named;
 		if first.is_ascii_alphabetic() {
-			for ch in &chars[1..] {
+			for ch in &bytes[1..] {
 				if !ch.is_ascii_alphabetic() {
 					return None;
 				}
 			}
-		} else if first == &'#' && total > 1 {
-			let second = chars[1];
+		} else if first == b'#' && total > 1 {
+			let second = bytes[1];
 			match second {
-				'0'..='9' => {
+				b'0'..=b'9' => {
 					// decimal
-					for ch in &chars[2..] {
-						if !matches!(ch, '0'..='9') {
+					for byte in &bytes[2..] {
+						if !matches!(byte, b'0'..=b'9') {
 							return None;
 						}
 					}
 					entity_type = EntityType::Decimal;
 				}
-				'x' | 'X' => {
+				b'x' | b'X' => {
 					// hex
 					if total > 2 {
-						for ch in &chars[2..] {
-							if !matches!(ch, 'a'..='f' | 'A'..='F' | '0'..='9') {
+						for byte in &bytes[2..] {
+							if !matches!(byte, b'a'..=b'f' | b'A'..=b'F' | b'0'..=b'9') {
 								return None;
 							}
 						}
@@ -524,47 +518,45 @@ impl Entity {
 		} else {
 			return None;
 		}
-		//
+		// go on the steps
 		use EntityType::*;
 		match entity_type {
 			Named => {
 				// normal entity characters
-				if let Some(&ch) = NORMAL_NAME_ENTITY_CHAR.get(chars) {
+				if let Some(&ch) = NORMAL_NAME_ENTITY_BYTE.get(bytes) {
 					return Some(ch);
 				}
 				// try to find the entity
-				let first_letter = &chars[0];
-				let search = chars.iter().collect::<String>();
-				let search = search.as_str();
+				let first_letter = &bytes[0];
 				if let Some(&(start_index, end_index)) = FIRST_LETTER_POSITION.get(&first_letter) {
 					if let Some(find_index) = LETTER_ORDERED_ENTITIES[start_index..end_index]
 						.iter()
-						.position(|(name, _)| name == &search)
+						.position(|&(name, _)| name == bytes)
 					{
 						let last_index = start_index + find_index;
 						let (_, code) = LETTER_ORDERED_ENTITIES[last_index];
-						return Some(std::char::from_u32(code).unwrap());
+						return Some(code);
 					}
 				}
 			}
 			Hex | Decimal => {
 				let base_type: u32;
-				let numbers: &[char];
+				let numbers: &[Byte];
 				if entity_type == Hex {
 					base_type = 16;
 					// remove the prefix '#x'
-					numbers = &chars[2..];
+					numbers = &bytes[2..];
 				} else {
 					base_type = 10;
 					// remove the prefix '#'
-					numbers = &chars[1..];
+					numbers = &bytes[1..];
 				}
 				if numbers.is_empty() {
 					// '&#;' '&#x;'
 					return None;
 				}
-				let numbers = numbers.iter().collect::<String>();
-				if let Ok(char_code) = i64::from_str_radix(&numbers, base_type) {
+				let numbers = std::str::from_utf8(bytes).expect("the bytes is not utf8");
+				if let Ok(char_code) = i64::from_str_radix(numbers, base_type) {
 					if (0..=0x10ffff).contains(&char_code) {
 						if let Some(last_ch) = std::char::from_u32(char_code as u32) {
 							return Some(last_ch);
