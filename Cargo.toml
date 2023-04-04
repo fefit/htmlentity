@@ -12,7 +12,9 @@ exclude = ["node/**/*.*","pkg/**/*.*", "build.sh", "codecov.yml", ".travis.yml"]
 license = "MIT"
 
 [dependencies]
+anyhow = "1.0.70"
 lazy_static = "1.4.0"
+thiserror = "1.0.40"
 
 [lib]
 path = "src/lib.rs"

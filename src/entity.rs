@@ -2,8 +2,10 @@ use crate::{
 	data::{ENTITIES, FIRST_LETTER_POSITION, LETTER_ORDERED_ENTITIES},
 	types::{Byte, ByteList, BytesCharEntity, EntityCharBytes},
 };
+use anyhow::Result as AnyhowResult;
 use lazy_static::lazy_static;
 use std::{borrow::Cow, char, collections::HashMap, ops::RangeInclusive};
+use thiserror::Error;
 
 lazy_static! {
 	// html bytes
@@ -48,6 +50,7 @@ fn char_to_utf8_bytes(ch: char) -> ByteList {
 	for _ in 0..len {
 		bytes.push(0);
 	}
+	ch.encode_utf8(&mut bytes);
 	bytes
 }
 
@@ -76,24 +79,151 @@ fn numbers_to_char(bytes: &[Byte], radix: u32) -> Option<char> {
 	None
 }
 
-pub trait IEntityTrait {}
+#[inline]
+fn bytes_to_chars(bytes: &[Byte], result: &mut Vec<char>) -> AnyhowResult<()> {
+	let mut next_count = 0;
+	let mut ch: u32 = 0;
+	let mut start_index: usize = 0;
+	for (idx, byte) in bytes.iter().enumerate() {
+		match next_count {
+			0 => {
+				if (byte >> 7) == 0 {
+					result.push(*byte as char);
+				} else {
+					let mut head = byte >> 3;
+					if head == 0b11110 {
+						next_count = 3;
+						ch = ((byte & 0b111) as u32) << (next_count * 6);
+					} else {
+						head >>= 1;
+						if head == 0b1110 {
+							next_count = 2;
+							ch = ((byte & 0b1111) as u32) << (next_count * 6);
+						} else {
+							head >>= 1;
+							if head == 0b110 {
+								next_count = 1;
+								ch = ((byte & 0b11111) as u32) << (next_count * 6);
+							} else {
+								// wrong utf8 byte
+								return Err(HtmlEntityError::Decode("").into());
+							}
+						}
+					}
+					start_index = idx;
+				}
+			}
+			1 | 2 | 3 => {
+				if (byte >> 6) == 0b10 {
+					next_count -= 1;
+					ch += ((byte & 0b111111) as u32) << (next_count * 6);
+					if next_count == 0 {
+						let cur_ch = char::from_u32(ch).ok_or(HtmlEntityError::Decode(""))?;
+						result.push(cur_ch);
+					}
+				} else {
+					// wrong utf8
+					return Err(HtmlEntityError::Decode("").into());
+				}
+			}
+			// unreachable feature
+			_ => unreachable!(),
+		}
+	}
+	Ok(())
+}
 
+#[derive(Error, Debug)]
+pub enum HtmlEntityError {
+	#[error("decode error: {0}")]
+	Decode(&'static str),
+	#[error("encode error: {0}")]
+	Encode(&'static str),
+}
 #[derive(Debug)]
 pub struct DecodeData<'b> {
 	bytes: Cow<'b, [Byte]>,
 	entities: Vec<(RangeInclusive<usize>, char)>,
 }
 
+// impl decode data to string
 impl<'b> ToString for DecodeData<'b> {
+	// to string
 	fn to_string(&self) -> String {
 		if self.entities.is_empty() {
 			return std::str::from_utf8(&self.bytes)
 				.expect("decode data has incorrect utf8 byte sequence.")
 				.to_string();
 		}
-		let mut result = String::with_capacity(self.bytes.len());
+		let bytes = &self.bytes;
+		let total = bytes.len();
+		let mut result = String::with_capacity(total);
 		let mut index = 0;
+		for (range, ch) in &self.entities {
+			let start_index = *range.start();
+			let end_index = *range.end();
+			if index < start_index {
+				result.push_str(std::str::from_utf8(&bytes[index..start_index]).expect(""));
+			}
+			result.push(*ch);
+			index = end_index + 1;
+		}
+		if index < total {
+			result.push_str(std::str::from_utf8(&bytes[index..]).expect(""));
+		}
 		result
+	}
+}
+
+// impl decode data into vec bytes
+impl<'b> From<DecodeData<'b>> for Vec<Byte> {
+	fn from(value: DecodeData<'b>) -> Self {
+		if value.entities.is_empty() {
+			return value.bytes.to_vec();
+		}
+		let bytes = value.bytes;
+		let total = bytes.len();
+		let mut result: Vec<Byte> = Vec::with_capacity(total);
+		let mut index = 0;
+		for (range, ch) in &value.entities {
+			let start_index = *range.start();
+			let end_index = *range.end();
+			if index < start_index {
+				result.extend_from_slice(&bytes[index..start_index]);
+			}
+			result.extend(char_to_utf8_bytes(*ch));
+			index = end_index + 1;
+		}
+		if index < total {
+			result.extend(&bytes[index..]);
+		}
+		result
+	}
+}
+
+impl<'b> From<DecodeData<'b>> for AnyhowResult<Vec<char>> {
+	fn from(value: DecodeData<'b>) -> Self {
+		let bytes = value.bytes;
+		let total = bytes.len();
+		let mut result: Vec<char> = Vec::with_capacity(total / 2);
+		if value.entities.is_empty() {
+			bytes_to_chars(&bytes, &mut result)?;
+			return Ok(result);
+		}
+		let mut index = 0;
+		for (range, ch) in &value.entities {
+			let start_index = *range.start();
+			let end_index = *range.end();
+			if index < start_index {
+				bytes_to_chars(&bytes[index..start_index], &mut result)?;
+			}
+			result.push(*ch);
+			index = end_index + 1;
+		}
+		if index < total {
+			bytes_to_chars(&bytes[index..], &mut result)?;
+		}
+		Ok(result)
 	}
 }
 
@@ -115,6 +245,7 @@ pub enum EncodeType {
 	NamedOrDecimal = 0b00101,
 }
 
+#[inline]
 fn filter_entity_set(
 	charset: &EntityCharBytes,
 	encode_type: &EncodeType,
@@ -157,7 +288,7 @@ impl EntitySet {
 		match self {
 			SpecialChars => filter_entity_set(&SPECIAL_BYTES, encode_type, ch),
 			Html => filter_entity_set(&HTML_BYTES, encode_type, ch),
-			NoASCII => (*ch as u32 > 0x80, None),
+			NoASCII => (*ch as u32 > 0x7f, None),
 			SpecialCharsAndNoASCII => {
 				let result = EntitySet::NoASCII.filter(ch, encode_type);
 				if result.0 {
@@ -429,29 +560,36 @@ pub fn decode_chars(chars: &[char]) -> Cow<'_, [char]> {
 			}
 		} else {
 			// in entity
-			if *ch == ';' {
-				// end of the entity, ignore '&;'
-				if start_index != idx {
-					let bytes = tr_chars_to_utf8_bytes(&chars[start_index..idx]);
-					if let Some(bytes) = bytes {
-						if let Some(decode_char) = Entity::decode(&bytes) {
-							// find at least one entity
-							// append the entity's prev chars
-							if start_index > 1 {
-								data.extend_from_slice(&chars[..start_index - 1]);
+			match *ch {
+				';' => {
+					// end of the entity, ignore '&;'
+					if start_index != idx {
+						let bytes = tr_chars_to_utf8_bytes(&chars[start_index..idx]);
+						if let Some(bytes) = bytes {
+							if let Some(decode_char) = Entity::decode(&bytes) {
+								// find at least one entity
+								// append the entity's prev chars
+								if start_index > 1 {
+									data.extend_from_slice(&chars[..start_index - 1]);
+								}
+								// append entity character
+								data.push(decode_char);
+								// append the left character
+								let next_idx = idx + 1;
+								if next_idx != chars.len() {
+									decode_chars_to(&chars[next_idx..], &mut data);
+								}
+								return Cow::Owned(data);
 							}
-							// append entity character
-							data.push(decode_char);
-							// append the left character
-							let next_idx = idx + 1;
-							if next_idx != chars.len() {
-								decode_chars_to(&chars[next_idx..], &mut data);
-							}
-							return Cow::Owned(data);
 						}
 					}
+					is_in_entity = false;
 				}
-				is_in_entity = false;
+				'&' => {
+					// always reset entity start index
+					start_index = idx + 1;
+				}
+				_ => {}
 			}
 		}
 	}
@@ -475,22 +613,30 @@ pub fn decode_chars_to(chars: &[char], data: &mut Vec<char>) {
 			}
 		} else {
 			// in entity
-			if ch == ';' {
-				// end of the entity, ignore '&;'
-				if start_index != idx {
-					let bytes = tr_chars_to_utf8_bytes(&chars[start_index..idx]);
-					if let Some(bytes) = bytes {
-						if let Some(decode_char) = Entity::decode(&bytes) {
-							// find the
-							data.push(decode_char);
-							is_in_entity = false;
-							continue;
+			match ch {
+				';' => {
+					// end of the entity, ignore '&;'
+					if start_index != idx {
+						let bytes = tr_chars_to_utf8_bytes(&chars[start_index..idx]);
+						if let Some(bytes) = bytes {
+							if let Some(decode_char) = Entity::decode(&bytes) {
+								// find the
+								data.push(decode_char);
+								is_in_entity = false;
+								continue;
+							}
 						}
 					}
+					// not a regular entity
+					data.extend_from_slice(&chars[start_index - 1..=idx]);
+					is_in_entity = false;
 				}
-				// not a regular entity
-				data.extend_from_slice(&chars[start_index - 1..=idx]);
-				is_in_entity = false;
+				'&' => {
+					// always reset the entity start index, '&a&lt;'
+					data.extend_from_slice(&chars[start_index - 1..idx]);
+					start_index = idx + 1;
+				}
+				_ => {}
 			}
 		}
 	}
@@ -515,14 +661,21 @@ pub fn decode(content: &[Byte]) -> DecodeData<'_> {
 			}
 		} else {
 			// in entity
-			if *byte == b';' {
-				// end of the entity, ignore '&;'
-				if start_index != idx {
-					if let Some(decode_char) = Entity::decode(&content[start_index..idx]) {
-						entities.push((start_index - 1..=idx, decode_char));
+			match *byte {
+				b';' => {
+					// end of the entity, ignore '&;'
+					if start_index != idx {
+						if let Some(decode_char) = Entity::decode(&content[start_index..idx]) {
+							entities.push((start_index - 1..=idx, decode_char));
+						}
 					}
+					is_in_entity = false;
 				}
-				is_in_entity = false;
+				b'&' => {
+					// always reset entity start index
+					start_index = idx + 1;
+				}
+				_ => {}
 			}
 		}
 	}
