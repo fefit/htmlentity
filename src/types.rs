@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
+
+use crate::entity::EncodeType;
 
 pub type Byte = u8;
 pub type ByteList = Vec<Byte>;
