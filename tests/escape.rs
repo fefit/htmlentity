@@ -70,8 +70,8 @@ fn test_escape() -> AnyhowResult<()> {
   assert_eq!(encoded_string?, encoded_content);
   assert_eq!(decode_to_string(encoded_content), content);
   // -------------------- test 3 --------------------
-  let content = "<div>";
-  let encoded_content = "&lt;&#x64;&#x69;&#x76;&gt;";
+  let content = "<div>℗ℑ";
+  let encoded_content = "&lt;&#x64;&#x69;&#x76;&gt;&copysr;&image;";
   let encoded_data = encode(
     content.as_bytes(),
     &EncodeType::NamedOrHex,
@@ -154,9 +154,9 @@ fn test_decode_decimal() {
 
 #[test]
 fn test_exclude_named() -> AnyhowResult<()> {
-  let html = "<div class='header'></div>";
+  let html = "<div class='header'>℗</div>";
   let encode_type = EncodeType::Named;
-  let entity_set = CharacterSet::SpecialChars;
+  let entity_set = CharacterSet::SpecialCharsAndNonASCII;
   let html_encoded = encode_with(html.as_bytes(), &encode_type, |ch, _| {
     if *ch == '<' {
       return (false, None);
@@ -167,7 +167,7 @@ fn test_exclude_named() -> AnyhowResult<()> {
   assert!(encoded_string.is_ok());
   assert_eq!(
     encoded_string?,
-    String::from("<div class=&apos;header&apos;&gt;</div&gt;")
+    String::from("<div class=&apos;header&apos;&gt;&copysr;</div&gt;")
   );
 
   // special characters, but exclude the single quote "'" use named.

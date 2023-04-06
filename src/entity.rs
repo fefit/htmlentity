@@ -312,6 +312,7 @@ fn call_trait_method_byte<'a, T: IBytesTrait>(
   bytes.get(prev_start_byte_index + index)
 }
 
+/// DecodedData, impl the ICodedDataTrait and IBytesTrait and IntoIterator.
 #[derive(Debug)]
 pub struct DecodedData<'b> {
   bytes: Cow<'b, [Byte]>,
@@ -413,6 +414,7 @@ impl IBytesTrait for CharEntity {
   }
 }
 
+/// ICodedDataTrait
 pub trait ICodedDataTrait
 where
   for<'a> &'a Self: Into<StringResult> + Into<ByteList> + Into<CharListResult>,
@@ -566,6 +568,7 @@ impl<'b> From<DecodedData<'b>> for CharListResult {
     (&value).into()
   }
 }
+/// EncodedData, impl the ICodedDataTrait and IBytesTrait and IntoIterator.
 #[derive(Debug)]
 pub struct EncodedData<'b> {
   bytes: Cow<'b, [Byte]>,
@@ -653,7 +656,7 @@ impl<'b> From<EncodedData<'b>> for ByteList {
   }
 }
 
-/// EncodeType: the output format type, default: `NamedOrDecimal`
+/// EncodeType: html entity encoding format
 #[derive(Copy, Clone, Default)]
 #[repr(u8)]
 pub enum EncodeType {
@@ -681,20 +684,22 @@ fn filter_entity_set(
   (false, None)
 }
 
-/// The type of characters you need encoded, default: `SpecialCharsAndNoASCII`
+/// The character set that needs to be encoded to html entity.
 #[derive(Default)]
 pub enum CharacterSet {
-  /// Encode all characters
+  /// all characters
   All = 1,
-  /// Encode character not ASCII,                  
-  NoASCII = 2,
-  /// encode '<','>','&', main for entity in text node when call element's `innerHtml()` method    
+  /// non ASCII, code point > 0xff                
+  NonASCII = 2,
+  /// html: '<','>','&'    
   #[default]
   Html = 3,
-  /// encode '<','>','&', '\'', '"'                
+  /// special characters: '<','>','&', '\'', '"'                
   SpecialChars = 4,
-  /// this is default
-  SpecialCharsAndNoASCII = 6,
+  /// html and non ascii
+  HtmlAndNonASCII = 5,
+  /// special characters and non ascii
+  SpecialCharsAndNonASCII = 6,
 }
 
 impl CharacterSet {
@@ -704,9 +709,16 @@ impl CharacterSet {
     match self {
       SpecialChars => filter_entity_set(&SPECIAL_BYTES, encode_type, ch),
       Html => filter_entity_set(&HTML_BYTES, encode_type, ch),
-      NoASCII => (*ch as u32 > 0xff, None),
-      SpecialCharsAndNoASCII => {
-        let result = CharacterSet::NoASCII.filter(ch, encode_type);
+      NonASCII => (*ch as u32 > 0xff, None),
+      HtmlAndNonASCII => {
+        let result = CharacterSet::NonASCII.filter(ch, encode_type);
+        if result.0 {
+          return result;
+        }
+        CharacterSet::Html.filter(ch, encode_type)
+      }
+      SpecialCharsAndNonASCII => {
+        let result = CharacterSet::NonASCII.filter(ch, encode_type);
         if result.0 {
           return result;
         }
@@ -724,6 +736,7 @@ pub enum EntityType {
   Decimal,
 }
 
+/// CharEntity struct
 #[derive(Debug)]
 pub struct CharEntity {
   entity_type: EntityType,
@@ -821,7 +834,7 @@ impl ToString for CharEntity {
 pub struct Entity;
 
 impl Entity {
-  /// `decode()`: decode the entity, if ok, return the unicode character.
+  /// Decode html entity utf-8 bytes(does't contain the beginning '&' and the end ';') into the character.
   pub fn decode(bytes: &[Byte]) -> AnyhowResult<char> {
     let total = bytes.len();
     if total == 0 {
@@ -1008,7 +1021,7 @@ pub fn encode_char(ch: &char, encode_type: &EncodeType) -> Option<CharEntity> {
   None
 }
 
-/// Encode html utf-8 bytes according to the specified encoding format and specified encoding character set.
+/// Encode characters in the utf-8 bytes into html entities according to the specified encoding format and specified encoding character set.
 ///
 /// # Examples
 ///
@@ -1077,9 +1090,32 @@ pub fn encode_to(
     data,
   );
 }
-/**
- *
- */
+
+/// Encode the html entities in utf-8 bytes into encoded data, and specify the characters to be encoded and the encoding format through the `filter_fn` method parameter.
+///
+/// # Examples
+/// ```
+/// use htmlentity::entity::*;
+/// use htmlentity::types::AnyhowResult;
+/// use std::borrow::Cow;
+/// # fn main() -> AnyhowResult<()> {
+/// let html = "<div class='header'></div>";
+/// let charset = CharacterSet::SpecialChars;
+/// let encoded_data = encode_with(&html.as_bytes(), &EncodeType::Named, |ch, encode_type|{
+///    // Use html entity number encoding for single quotes (')
+///    if ch == &'\''{
+///       if let Some(char_entity) = encode_char(ch, &EncodeType::Decimal){
+///         return (true, Some((EntityType::Decimal, Cow::from(char_entity.data()))));
+///       }
+///    }
+///    return charset.filter(ch, encode_type);
+/// });
+/// let data_to_string = encoded_data.to_string();
+/// assert!(data_to_string.is_ok());
+/// assert_eq!(data_to_string?, String::from("&lt;div class=&#39;header&#39;&gt;&lt;/div&gt;"));
+/// # Ok(())
+/// # }
+/// ```
 pub fn encode_with<'a>(
   content: &'a [Byte],
   encode_type: &EncodeType,
@@ -1112,6 +1148,24 @@ pub fn encode_with<'a>(
   }
 }
 
+/// Similar to the `encode_with` method, but directly writes the byte data into the last parameter passed in.
+///
+/// # Examples
+/// ```
+/// use htmlentity::entity::*;
+/// use htmlentity::types::{ ByteList, AnyhowResult };
+/// use std::borrow::Cow;
+/// # fn main() -> AnyhowResult<()> {
+/// let html = "<div class='header'></div>";
+/// let charset = CharacterSet::SpecialChars;
+/// let mut data: ByteList = vec![];
+/// let encoded_data = encode_with_to(&html.as_bytes(), &EncodeType::Named, |ch, encode_type|{
+///    return charset.filter(ch, encode_type);
+/// }, &mut data);
+/// assert_eq!(data, b"&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+/// # Ok(())
+/// # }
+/// ```
 pub fn encode_with_to(
   content: &[Byte],
   encode_type: &EncodeType,
@@ -1143,9 +1197,20 @@ pub fn encode_with_to(
     }
   });
 }
-/**
- * decode chars into Cow chars
- */
+
+/// Decode the html entities in the character list.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// use std::borrow::Cow;
+///
+/// let char_list = Cow::from(vec!['a', '<', 'b']);
+/// assert_eq!(decode_chars(&String::from("a&lt;b").chars().collect::<Vec<char>>()), char_list);
+/// assert_eq!(decode_chars(&String::from("a&#60;b").chars().collect::<Vec<char>>()), char_list);
+/// assert_eq!(decode_chars(&String::from("a&#x3c;b").chars().collect::<Vec<char>>()), char_list);
+/// ```
 pub fn decode_chars(chars: &[char]) -> Cow<'_, [char]> {
   let mut data: Vec<char> = vec![];
   let mut is_in_entity = false;
@@ -1195,9 +1260,27 @@ pub fn decode_chars(chars: &[char]) -> Cow<'_, [char]> {
   Cow::from(chars)
 }
 
-/**
- * decode chars into vec chars
- */
+/// Similar to the `decode_chars` method, but directly writes the character data into the last parameter passed in.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// use std::borrow::Cow;
+///
+/// let char_list = vec!['a','<', 'b'];
+/// let mut data: Vec<char> = vec![];
+/// decode_chars_to(&String::from("a&lt;b").chars().collect::<Vec<char>>(), &mut data);
+/// assert_eq!(data, char_list);
+///
+/// data.clear();
+/// decode_chars_to(&String::from("a&#60;b").chars().collect::<Vec<char>>(), &mut data);
+/// assert_eq!(data, char_list);
+///
+/// data.clear();
+/// decode_chars_to(&String::from("a&#x3c;b").chars().collect::<Vec<char>>(), &mut data);
+/// assert_eq!(data, char_list);
+/// ```
 pub fn decode_chars_to(chars: &[char], data: &mut Vec<char>) {
   let mut is_in_entity = false;
   let mut start_index: usize = 0;
@@ -1244,9 +1327,44 @@ pub fn decode_chars_to(chars: &[char], data: &mut Vec<char>) {
     data.extend_from_slice(&chars[start_index - 1..]);
   }
 }
-/**
- * decode bytes to data
- */
+
+/// Decode html entities in utf-8 bytes.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// use htmlentity::types::AnyhowResult;
+/// # fn main() -> AnyhowResult<()> {
+/// let html = "<div class='header'></div>";
+/// let orig_bytes = html.as_bytes();
+/// let encoded_data = encode(orig_bytes, &EncodeType::Named, &CharacterSet::SpecialChars);
+/// let encode_bytes = encoded_data.to_bytes();
+/// assert_eq!(encode_bytes, b"&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+/// // decode the bytes
+/// let decoded_data = decode(&encode_bytes);
+/// let data_to_string = decoded_data.to_string();
+/// assert!(data_to_string.is_ok());
+/// assert_eq!(data_to_string?, String::from(html));
+/// // Convert encoded data to Vec<char>.
+/// let data_to_chars = decoded_data.to_chars();
+/// assert!(data_to_chars.is_ok());
+/// assert_eq!(data_to_chars?, String::from(html).chars().collect::<Vec<char>>());
+/// // Convert encoded data to bytes(Vec<u8>).
+/// let data_to_bytes = decoded_data.to_bytes();
+/// assert_eq!(data_to_bytes, html.as_bytes());
+/// // Decoded data can be also iterated by byte
+/// for (idx, (byte, _)) in decoded_data.into_iter().enumerate(){
+///    assert_eq!(*byte, orig_bytes[idx]);
+/// }
+/// // Get the total bytes size through the 'bytes_len' method and visit the byte through the 'byte(idx)' method.
+/// for idx in 0..decoded_data.bytes_len(){
+///    assert_eq!(decoded_data.byte(idx), Some(&orig_bytes[idx]));
+/// }
+/// # Ok(())
+/// # }
+/// ```
+/// ```
 pub fn decode(content: &[Byte]) -> DecodedData<'_> {
   let mut entities: Vec<(CodeRange, (char, ByteList))> = vec![];
   let mut errors: Vec<(CodeRange, anyhow::Error)> = vec![];
@@ -1302,9 +1420,20 @@ pub fn decode(content: &[Byte]) -> DecodedData<'_> {
   }
 }
 
-/**
- *
- */
+/// Similar to the `decode` method, but directly writes the byte data into the last parameter passed in.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// use htmlentity::types::ByteList;
+/// use std::borrow::Cow;
+///
+/// let encoded_bytes = b"&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;";
+/// let mut data: ByteList = vec![];
+/// decode_to(encoded_bytes, &mut data);
+/// assert_eq!(data, b"<div class='header'></div>");
+/// ```
 pub fn decode_to(content: &[Byte], data: &mut Vec<Byte>) {
   let mut is_in_entity = false;
   let mut start_index: usize = 0;
