@@ -35,6 +35,13 @@ fn test_escape() -> AnyhowResult<()> {
   assert!(encoded_chars.is_ok());
   let cur_chars = encoded_chars?;
   assert_eq!(decode_chars(&cur_chars).iter().collect::<String>(), content);
+  assert_eq!(decode_chars(&['&', ';']).iter().collect::<String>(), "&;");
+  assert_eq!(
+    decode_chars(&['&', ';', '&', 'l', 't', ';'])
+      .iter()
+      .collect::<String>(),
+    "&;<"
+  );
   // decode chars to
   let mut decode_result: Vec<char> = Vec::new();
   decode_chars_to(&cur_chars, &mut decode_result);
@@ -106,6 +113,12 @@ fn test_wrong_entity() {
 fn test_decode_named() {
   // wrong named
   let content = "&#q123;";
+  let mut decoded_data = decode(content.as_bytes());
+  assert!(!decoded_data.is_ok());
+  assert!(!decoded_data.get_errors().is_empty());
+  assert_eq!(decoded_data.entity_count(), 0);
+  decoded_data.to_owned();
+  assert_eq!(decoded_data.into_bytes(), content.as_bytes());
   assert_eq!(decode_to_string(content), content);
   let content = "&123;";
   assert_eq!(decode_to_string(content), content);
