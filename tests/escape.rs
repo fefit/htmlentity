@@ -2,10 +2,10 @@ use std::borrow::Cow;
 
 use htmlentity::{
   entity::{
-    decode, decode_chars, decode_chars_to, decode_to, encode, encode_char, encode_with,
-    CharacterSet, EncodeType, EntityType, ICodedDataTrait,
+    decode, decode_chars, decode_chars_to, decode_to, encode, encode_char, encode_chars_with,
+    encode_with, CharacterSet, EncodeType, EntityType, ICodedDataTrait,
   },
-  types::AnyhowResult,
+  types::{AnyhowResult, ByteList},
 };
 
 fn decode_to_string(content: &str) -> String {
@@ -99,6 +99,21 @@ fn test_escape() -> AnyhowResult<()> {
   let encoded_string = encoded_data.to_string();
   assert!(encoded_string.is_ok());
   assert_eq!(encoded_string?, "&Tab;<div&gt;");
+  // encode chars
+  let chars = String::from("<div class='header'></div>")
+    .chars()
+    .collect::<Vec<char>>();
+  let character_set = CharacterSet::HtmlAndNonASCII;
+  let encoded_chars = encode_chars_with(&chars, |ch| {
+    if character_set.contains(ch) || *ch == '\'' {
+      return Some(&EncodeType::Named);
+    }
+    None
+  });
+  assert_eq!(
+    encoded_chars.iter().collect::<String>(),
+    "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;"
+  );
   Ok(())
 }
 
@@ -113,16 +128,19 @@ fn test_wrong_entity() {
 fn test_decode_named() {
   // wrong named
   let content = "&#q123;";
-  let mut decoded_data = decode(content.as_bytes());
+  let content_bytes = content.as_bytes();
+  let mut decoded_data = decode(content_bytes);
   assert!(!decoded_data.is_ok());
   assert!(!decoded_data.get_errors().is_empty());
   assert_eq!(decoded_data.entity_count(), 0);
+  assert_eq!(decoded_data.bytes(), Cow::Borrowed(content_bytes));
   decoded_data.to_owned();
   assert_eq!(decoded_data.into_bytes(), content.as_bytes());
   assert_eq!(decode_to_string(content), content);
   let content = "&123;";
   assert_eq!(decode_to_string(content), content);
   let content = "&q123;";
+
   assert_eq!(decode_to_string(content), content);
 }
 
@@ -228,6 +246,10 @@ fn test_exclude_named() -> AnyhowResult<()> {
   assert_eq!(
     encoded_string?,
     "&#60;div class=&#39;header&#39;&#62;&#60;/div&#62;"
+  );
+  assert_eq!(
+    html_encoded.bytes(),
+    Cow::Owned::<ByteList>(b"&#60;div class=&#39;header&#39;&#62;&#60;/div&#62;".to_vec())
   );
   Ok(())
 }

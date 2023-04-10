@@ -315,7 +315,7 @@ fn call_trait_method_byte<'a, T: IBytesTrait>(
 /// DecodedData, impl the ICodedDataTrait and IBytesTrait and IntoIterator.
 #[derive(Debug)]
 pub struct DecodedData<'b> {
-  bytes: Cow<'b, [Byte]>,
+  inner_bytes: Cow<'b, [Byte]>,
   entities: Vec<(CodeRange, (char, ByteList))>,
   errors: Vec<(CodeRange, anyhow::Error)>,
 }
@@ -325,11 +325,11 @@ impl<'b> ICodedDataTrait for DecodedData<'b> {}
 impl<'b> IBytesTrait for DecodedData<'b> {
   // bytes len
   fn bytes_len(&self) -> usize {
-    call_trait_method_bytes_len(&self.bytes, &self.entities)
+    call_trait_method_bytes_len(&self.inner_bytes, &self.entities)
   }
   // byte
   fn byte(&self, index: usize) -> Option<&Byte> {
-    call_trait_method_byte(&self.bytes, &self.entities, index)
+    call_trait_method_byte(&self.inner_bytes, &self.entities, index)
   }
 }
 
@@ -349,19 +349,26 @@ impl<'b> DecodedData<'b> {
   // to owned
   pub fn to_owned(&mut self) {
     if self.entities.is_empty() {
-      self.bytes = self.bytes.clone();
+      self.inner_bytes = self.inner_bytes.clone();
     } else {
       let bytes = self.to_bytes();
-      self.bytes = Cow::Owned(bytes);
+      self.inner_bytes = Cow::Owned(bytes);
       self.entities.clear();
     }
   }
   // into bytes
   pub fn into_bytes(self) -> ByteList {
     if self.entities.is_empty() {
-      return self.bytes.into_owned();
+      return self.inner_bytes.into_owned();
     }
     self.to_bytes()
+  }
+  // get bytes with cow
+  pub fn bytes(&self) -> Cow<'_, [Byte]> {
+    if self.entities.is_empty() {
+      return Cow::Borrowed(&self.inner_bytes);
+    }
+    return Cow::Owned(self.to_bytes());
   }
 }
 
@@ -501,7 +508,7 @@ impl<'a> IntoIterator for &'a DecodedData<'a> {
   type Item = IterDataItem<'a>;
   type IntoIter = DataIter<'a, (char, ByteList)>;
   fn into_iter(self) -> Self::IntoIter {
-    gen_into_iter(&self.bytes, &self.entities)
+    gen_into_iter(&self.inner_bytes, &self.entities)
   }
 }
 
@@ -509,7 +516,7 @@ impl<'a> IntoIterator for &'a EncodedData<'a> {
   type Item = IterDataItem<'a>;
   type IntoIter = DataIter<'a, CharEntity>;
   fn into_iter(self) -> Self::IntoIter {
-    gen_into_iter(&self.bytes, &self.entities)
+    gen_into_iter(&self.inner_bytes, &self.entities)
   }
 }
 /**
@@ -519,7 +526,7 @@ impl<'a> IntoIterator for &'a EncodedData<'a> {
  */
 impl<'b> From<&DecodedData<'b>> for StringResult {
   fn from(value: &DecodedData<'b>) -> Self {
-    call_into_string_trait(&value.bytes, &value.entities, |&(ch, _), result| {
+    call_into_string_trait(&value.inner_bytes, &value.entities, |&(ch, _), result| {
       result.push(ch)
     })
   }
@@ -546,7 +553,7 @@ impl<'b> From<&DecodedData<'b>> for ByteList {
 impl<'b> From<DecodedData<'b>> for ByteList {
   fn from(value: DecodedData<'b>) -> Self {
     if value.entity_count() == 0 {
-      return value.bytes.into_owned();
+      return value.inner_bytes.into_owned();
     }
     (&value).into()
   }
@@ -557,7 +564,7 @@ impl<'b> From<DecodedData<'b>> for ByteList {
  */
 impl<'b> From<&DecodedData<'b>> for CharListResult {
   fn from(value: &DecodedData<'b>) -> Self {
-    call_into_char_list_trait(&value.bytes, &value.entities, |&(ch, _), result| {
+    call_into_char_list_trait(&value.inner_bytes, &value.entities, |&(ch, _), result| {
       result.push(ch)
     })
   }
@@ -571,7 +578,7 @@ impl<'b> From<DecodedData<'b>> for CharListResult {
 /// EncodedData, impl the ICodedDataTrait and IBytesTrait and IntoIterator.
 #[derive(Debug)]
 pub struct EncodedData<'b> {
-  bytes: Cow<'b, [Byte]>,
+  inner_bytes: Cow<'b, [Byte]>,
   entities: Vec<(CodeRange, CharEntity)>,
 }
 
@@ -579,10 +586,10 @@ impl<'b> ICodedDataTrait for EncodedData<'b> {}
 
 impl<'b> IBytesTrait for EncodedData<'b> {
   fn byte(&self, index: usize) -> Option<&Byte> {
-    call_trait_method_byte(&self.bytes, &self.entities, index)
+    call_trait_method_byte(&self.inner_bytes, &self.entities, index)
   }
   fn bytes_len(&self) -> usize {
-    call_trait_method_bytes_len(&self.bytes, &self.entities)
+    call_trait_method_bytes_len(&self.inner_bytes, &self.entities)
   }
 }
 
@@ -594,27 +601,38 @@ impl<'b> EncodedData<'b> {
   // to owned
   pub fn to_owned(&mut self) {
     if self.entities.is_empty() {
-      self.bytes = self.bytes.clone();
+      self.inner_bytes = self.inner_bytes.clone();
     } else {
       let bytes = self.to_bytes();
-      self.bytes = Cow::Owned(bytes);
+      self.inner_bytes = Cow::Owned(bytes);
       self.entities.clear();
     }
   }
   // into bytes
   pub fn into_bytes(self) -> ByteList {
     if self.entities.is_empty() {
-      return self.bytes.into_owned();
+      return self.inner_bytes.into_owned();
     }
     self.to_bytes()
+  }
+  // get bytes with cow
+  pub fn bytes(&self) -> Cow<'_, [Byte]> {
+    if self.entities.is_empty() {
+      return Cow::Borrowed(&self.inner_bytes);
+    }
+    return Cow::Owned(self.to_bytes());
   }
 }
 
 impl<'b> From<&EncodedData<'b>> for StringResult {
   fn from(value: &EncodedData<'b>) -> Self {
-    call_into_string_trait(&value.bytes, &value.entities, |char_entity, result| {
-      char_entity.write_string(result);
-    })
+    call_into_string_trait(
+      &value.inner_bytes,
+      &value.entities,
+      |char_entity, result| {
+        char_entity.write_string(result);
+      },
+    )
   }
 }
 
@@ -626,9 +644,13 @@ impl<'b> From<EncodedData<'b>> for StringResult {
 
 impl<'b> From<&EncodedData<'b>> for CharListResult {
   fn from(value: &EncodedData<'b>) -> Self {
-    call_into_char_list_trait(&value.bytes, &value.entities, |char_entity, result| {
-      char_entity.write_chars(result);
-    })
+    call_into_char_list_trait(
+      &value.inner_bytes,
+      &value.entities,
+      |char_entity, result| {
+        char_entity.write_chars(result);
+      },
+    )
   }
 }
 
@@ -650,7 +672,7 @@ impl<'b> From<&EncodedData<'b>> for ByteList {
 impl<'b> From<EncodedData<'b>> for ByteList {
   fn from(value: EncodedData<'b>) -> Self {
     if value.entity_count() == 0 {
-      return value.bytes.into_owned();
+      return value.inner_bytes.into_owned();
     }
     (&value).into()
   }
@@ -725,6 +747,20 @@ impl CharacterSet {
         CharacterSet::SpecialChars.filter(ch, encode_type)
       }
       All => (true, None),
+    }
+  }
+  /// Check if the character is in the charcter set
+  pub fn contains(&self, ch: &char) -> bool {
+    use CharacterSet::*;
+    match self {
+      SpecialChars => SPECIAL_BYTES.get(ch).is_some(),
+      Html => HTML_BYTES.get(ch).is_some(),
+      NonASCII => *ch as u32 > 0xff,
+      HtmlAndNonASCII => CharacterSet::NonASCII.contains(ch) || CharacterSet::Html.contains(ch),
+      SpecialCharsAndNonASCII => {
+        CharacterSet::NonASCII.contains(ch) || CharacterSet::SpecialChars.contains(ch)
+      }
+      All => true,
     }
   }
 }
@@ -1143,7 +1179,7 @@ pub fn encode_with<'a>(
     _ => Ok(()),
   });
   EncodedData {
-    bytes: Cow::from(content),
+    inner_bytes: Cow::from(content),
     entities,
   }
 }
@@ -1196,6 +1232,56 @@ pub fn encode_with_to(
       Ok(())
     }
   });
+}
+
+/// Encode a list of characters using a filter function.
+///
+/// # Examples
+///
+/// ```
+/// use htmlentity::entity::*;
+/// use std::borrow::Cow;
+///
+/// let chars = String::from("<div class='header'></div>").chars().collect::<Vec<char>>();
+/// let character_set = CharacterSet::HtmlAndNonASCII;
+/// let encoded_chars = encode_chars_with(&chars, |ch|{
+///   if character_set.contains(ch) || *ch == '\''{
+///      return Some(&EncodeType::Named);
+///   }
+///   return None;
+/// });
+/// assert_eq!(encoded_chars.iter().collect::<String>(), "&lt;div class=&apos;header&apos;&gt;&lt;/div&gt;");
+/// ```
+pub fn encode_chars_with(
+  chars: &[char],
+  filter_fn: impl Fn(&char) -> Option<&EncodeType>,
+) -> Cow<'_, [char]> {
+  let mut result = vec![];
+  let mut iter = chars.iter();
+  for (index, ch) in iter.by_ref().enumerate() {
+    if let Some(encode_type) = filter_fn(ch) {
+      if let Some(entity) = encode_char(ch, encode_type) {
+        if index > 0 {
+          result.extend_from_slice(&chars[..index]);
+        }
+        entity.write_chars(&mut result);
+        break;
+      }
+    }
+  }
+  for ch in iter {
+    if let Some(encode_type) = filter_fn(ch) {
+      if let Some(entity) = encode_char(ch, encode_type) {
+        entity.write_chars(&mut result);
+        continue;
+      }
+    }
+    result.push(*ch);
+  }
+  if !result.is_empty() {
+    return Cow::Owned(result);
+  }
+  Cow::Borrowed(chars)
 }
 
 /// Decode the html entities in the character list.
@@ -1414,7 +1500,7 @@ pub fn decode(content: &[Byte]) -> DecodedData<'_> {
   }
   // wrong entity at the end
   DecodedData {
-    bytes: Cow::from(content),
+    inner_bytes: Cow::from(content),
     entities,
     errors,
   }
