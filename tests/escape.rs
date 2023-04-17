@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use htmlentity::{
   entity::{
     decode, decode_chars, decode_chars_to, decode_to, encode, encode_char, encode_chars_with,
-    encode_with, CharacterSet, EncodeType, EntityType, ICodedDataTrait,
+    encode_with, CharacterSet, EncodeType, Entity, EntityType, ICodedDataTrait,
   },
   types::{AnyhowResult, ByteList},
 };
@@ -15,6 +15,17 @@ fn decode_to_string(content: &str) -> String {
     String::from("")
   }
 }
+
+#[test]
+fn test_entity_decode() -> AnyhowResult<()> {
+  assert!(Entity::decode_chars(&[]).is_err());
+  assert!(Entity::decode_chars(&['l', 't', '好']).is_err());
+  let ok_char = Entity::decode_chars(&['l', 't']);
+  assert!(ok_char.is_ok());
+  assert_eq!(ok_char?, '<');
+  Ok(())
+}
+
 #[test]
 fn test_escape() -> AnyhowResult<()> {
   // -------------------- test 1 --------------------

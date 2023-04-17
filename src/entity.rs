@@ -993,6 +993,39 @@ impl Entity {
       }
     }
   }
+  /// Similar to the `decode` method, but takes a character type as an argument.
+  pub fn decode_chars(chars: &[char]) -> AnyhowResult<char> {
+    let total = chars.len();
+    if total == 0 {
+      return Err(
+        HtmlEntityError::Decode(String::from(
+          "Can't decode with an empty character list argument.",
+        ))
+        .into(),
+      );
+    }
+    let mut bytes: ByteList = Vec::with_capacity(total);
+    let max_u8 = u8::MAX as u32;
+    let is_non_bytes = chars.iter().any(|ch| {
+      let char_code = *ch as u32;
+      if char_code > max_u8 {
+        true
+      } else {
+        bytes.push(char_code as Byte);
+        false
+      }
+    });
+    if !is_non_bytes {
+      return Entity::decode(&bytes);
+    }
+    Err(
+      HtmlEntityError::Decode(format!(
+        "Unable to find corresponding the html entity name '&{};'",
+        chars.iter().collect::<String>()
+      ))
+      .into(),
+    )
+  }
 }
 
 /// Encode character into html entity.
