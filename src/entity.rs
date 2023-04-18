@@ -364,9 +364,9 @@ impl<'b> DecodedData<'b> {
     self.to_bytes()
   }
   // get bytes with cow
-  pub fn bytes(&self) -> Cow<'_, [Byte]> {
+  pub fn bytes(&self) -> Cow<'b, [Byte]> {
     if self.entities.is_empty() {
-      return Cow::Borrowed(&self.inner_bytes);
+      return self.inner_bytes.clone();
     }
     return Cow::Owned(self.to_bytes());
   }
@@ -616,9 +616,9 @@ impl<'b> EncodedData<'b> {
     self.to_bytes()
   }
   // get bytes with cow
-  pub fn bytes(&self) -> Cow<'_, [Byte]> {
+  pub fn bytes(&self) -> Cow<'b, [Byte]> {
     if self.entities.is_empty() {
-      return Cow::Borrowed(&self.inner_bytes);
+      return self.inner_bytes.clone();
     }
     return Cow::Owned(self.to_bytes());
   }
