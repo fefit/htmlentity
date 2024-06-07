@@ -1,14 +1,20 @@
 [package]
 edition = "2018"
 name = "htmlentity"
-version = "1.3.1"
+version = "1.3.2"
 authors = ["ganmin <jxz_211@163.com>"]
-keywords = ["entity", "html-entity", "html-escape", "html-encode", "html-decode"]
+keywords = [
+  "entity",
+  "html-entity",
+  "html-escape",
+  "html-encode",
+  "html-decode",
+]
 categories = ["encoding", "parsing"]
 description = "A library for encoding and decoding HTML entities."
 repository = "https://github.com/fefit/htmlentity"
 homepage = "https://github.com/fefit/htmlentity"
-exclude = ["node/**/*.*","pkg/**/*.*", "build.sh", "codecov.yml"]
+exclude = ["node/**/*.*", "pkg/**/*.*", "build.sh", "codecov.yml"]
 license = "MIT"
 
 [dependencies]
@@ -27,4 +33,3 @@ grcov = "0.8.16"
 [[bench]]
 name = "benchmark"
 harness = false
-

@@ -7,7 +7,7 @@ use crate::{
 };
 
 use lazy_static::lazy_static;
-use std::{borrow::Cow, char, cmp::Ordering, collections::HashMap};
+use std::{borrow::Cow, char, cmp::Ordering, collections::HashMap, fmt::Display};
 use thiserror::Error;
 
 lazy_static! {
@@ -57,8 +57,7 @@ pub enum HtmlEntityError {
 #[inline]
 fn char_to_utf8_bytes(ch: char) -> ByteList {
   let len = ch.len_utf8();
-  let mut bytes: ByteList = vec![];
-  bytes.resize(len, 0);
+  let mut bytes: ByteList = vec![0; len];
   ch.encode_utf8(&mut bytes);
   bytes
 }
@@ -140,7 +139,7 @@ fn loop_utf8_bytes(
           }
         }
       }
-      1 | 2 | 3 => {
+      1..=3 => {
         if (byte >> 6) == 0b10 {
           next_count -= 1;
           ch += ((byte & 0b111111) as u32) << (next_count * 6);
@@ -348,9 +347,7 @@ impl<'b> DecodedData<'b> {
   }
   // to owned
   pub fn to_owned(&mut self) {
-    if self.entities.is_empty() {
-      self.inner_bytes = self.inner_bytes.clone();
-    } else {
+    if !self.entities.is_empty() {
       let bytes = self.to_bytes();
       self.inner_bytes = Cow::Owned(bytes);
       self.entities.clear();
@@ -600,9 +597,7 @@ impl<'b> EncodedData<'b> {
   }
   // to owned
   pub fn to_owned(&mut self) {
-    if self.entities.is_empty() {
-      self.inner_bytes = self.inner_bytes.clone();
-    } else {
+    if !self.entities.is_empty() {
       let bytes = self.to_bytes();
       self.inner_bytes = Cow::Owned(bytes);
       self.entities.clear();
@@ -920,7 +915,7 @@ impl Entity {
           // hex
           if total > 2 {
             for byte in &bytes[2..] {
-              if !matches!(byte, b'a'..=b'f' | b'A'..=b'F' | b'0'..=b'9') {
+              if !byte.is_ascii_hexdigit() {
                 let code = std::str::from_utf8(bytes)?;
                 return Err(
                   HtmlEntityError::Decode(format!(
